@@ -409,7 +409,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif not st['signed_in'] or st['auth_error']:
             acct.append(self._signin_steps(csrf))
         else:
-            acct.append('<details><summary>Sign in with another account</summary>%s</details>'
+            acct.append('<details><summary>Sign in again (or with another account)</summary>%s</details>'
                         % self._signin_steps(csrf))
         if has_client:
             acct.append(self._guide(csrf, s, open_=False))
