@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="repository.gdrivebridge" name="GDrive Bridge Repository" version="1.0.0" provider-name="GDrive Bridge">
+  <requires>
+    <import addon="xbmc.addon" version="12.0.0"/>
+  </requires>
+  <extension point="xbmc.addon.repository" name="GDrive Bridge Repository">
+    <dir>
+      <info compressed="false">https://gdrive-bridge.github.io/gdrive-bridge/repo/addons.xml</info>
+      <checksum verify="sha256">https://gdrive-bridge.github.io/gdrive-bridge/repo/addons.xml.sha256</checksum>
+      <datadir zip="true">https://gdrive-bridge.github.io/gdrive-bridge/repo/</datadir>
+      <hashes>sha256</hashes>
+    </dir>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Installs GDrive Bridge and keeps it up to date</summary>
+    <description lang="en_GB">The repository for GDrive Bridge. Install GDrive Bridge from here and Kodi updates it automatically when a new version is released.</description>
+    <platform>all</platform>
+    <license>MIT</license>
+    <website>https://gdrive-bridge.github.io/gdrive-bridge/</website>
+    <source>https://github.com/GDrive-Bridge/gdrive-bridge</source>
+    <assets>
+      <icon>icon.png</icon>
+    </assets>
+  </extension>
+</addon>

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addons>
+<addon id="repository.gdrivebridge" name="GDrive Bridge Repository" version="1.0.0" provider-name="GDrive Bridge">
+  <requires>
+    <import addon="xbmc.addon" version="12.0.0"/>
+  </requires>
+  <extension point="xbmc.addon.repository" name="GDrive Bridge Repository">
+    <dir>
+      <info compressed="false">https://gdrive-bridge.github.io/gdrive-bridge/repo/addons.xml</info>
+      <checksum verify="sha256">https://gdrive-bridge.github.io/gdrive-bridge/repo/addons.xml.sha256</checksum>
+      <datadir zip="true">https://gdrive-bridge.github.io/gdrive-bridge/repo/</datadir>
+      <hashes>sha256</hashes>
+    </dir>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Installs GDrive Bridge and keeps it up to date</summary>
+    <description lang="en_GB">The repository for GDrive Bridge. Install GDrive Bridge from here and Kodi updates it automatically when a new version is released.</description>
+    <platform>all</platform>
+    <license>MIT</license>
+    <website>https://gdrive-bridge.github.io/gdrive-bridge/</website>
+    <source>https://github.com/GDrive-Bridge/gdrive-bridge</source>
+    <assets>
+      <icon>icon.png</icon>
+    </assets>
+  </extension>
+</addon>
+<addon id="service.gdrivebridge" name="GDrive Bridge" version="0.3.0" provider-name="GDrive Bridge">
+  <requires>
+    <import addon="xbmc.python" version="3.0.1"/>
+    <import addon="script.module.certifi" version="2019.0.0"/>
+  </requires>
+  <extension point="xbmc.service" library="service.py"/>
+  <extension point="xbmc.python.script" library="default.py">
+    <provides>executable video</provides>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Google Drive as a Kodi WebDAV source</summary>
+    <description lang="en_GB">GDrive Bridge serves your Google Drive (My Drive, Shared with me and Shared drives) to Kodi as a read-only WebDAV source on this device. Add dav://127.0.0.1:8765/ as a video source and Kodi browses, scans and plays it like any network share, with seeking and subtitles.
+
+Set it up from any phone, tablet or computer: open the add-on, scan the QR code and follow the steps. It signs in with your own Google Cloud client, so nothing passes through anyone else's server.</description>
+    <news>v0.3.0: the setup page opens only when you choose "Set up on phone or computer" in Kodi (upgrades switch to this once; it can be set back to always on); needs Kodi 20 or later. v0.2.0: several Google accounts (one folder each), Starred, Search (add-on menu), iPhone HEIC photos shown as JPEG, and read-ahead so Kodi rarely waits on Google. See changelog.txt.</news>
+    <platform>all</platform>
+    <website>https://gdrive-bridge.github.io/gdrive-bridge/</website>
+    <source>https://github.com/GDrive-Bridge/gdrive-bridge</source>
+    <license>MIT</license>
+    <assets>
+      <icon>resources/icon.png</icon>
+      <fanart>resources/fanart.jpg</fanart>
+    </assets>
+  </extension>
+</addon>
+</addons>

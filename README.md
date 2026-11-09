@@ -25,10 +25,18 @@ Tested on Kodi 21 (Omega) on an NVIDIA Shield (Android TV). It needs Kodi 20 or 
 
 ## Install
 
-1. Download `service.gdrivebridge-<version>.zip` from
-   [Releases](https://github.com/GDrive-Bridge/gdrive-bridge/releases/latest).
-2. In Kodi: **Settings > System > Add-ons**, turn on **Unknown sources**.
-3. **Settings > Add-ons > Install from zip file**, choose the zip.
+Install the GDrive Bridge repository once, then install the add-on from it. Kodi then updates
+GDrive Bridge automatically when a new version is released.
+
+1. In Kodi: **Settings > System > Add-ons**, turn on **Unknown sources**.
+2. **Settings > File manager > Add source**, enter
+   `https://gdrive-bridge.github.io/gdrive-bridge/repo/` and name it `GDrive Bridge`.
+3. **Settings > Add-ons > Install from zip file > GDrive Bridge**, choose
+   `repository.gdrivebridge-1.0.0.zip`.
+4. **Install from repository > GDrive Bridge Repository**, and install **GDrive Bridge**.
+
+Each release's zip is also on [Releases](https://github.com/GDrive-Bridge/gdrive-bridge/releases/latest)
+for **Install from zip file**, but a copy installed that way doesn't update itself.
 
 ## Set up
 
@@ -109,6 +117,8 @@ everything stays on your device and is exchanged only with Google.
 ## Development
 
 - `service.gdrivebridge/` is the add-on. `python3 tools/build_zip.py` builds the release zip.
+- `repository.gdrivebridge/` is the repository add-on. `python3 tools/build_repo.py` rebuilds
+  the Kodi repository in `docs/repo/` (published by GitHub Pages); run it for every release.
 - Tests (standard library only): `python3 tools/test_local.py` and `python3 tools/test_drive.py`.
 - `tools/make_icon.py` (needs Pillow) draws the icon and fanart.
 - `docs/` is the GitHub Pages site (home page, privacy policy, optional sign-in relay page).

@@ -9,6 +9,7 @@
   :root { color-scheme: light dark; }
   body { font: 16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 24px 16px; }
   main { max-width: 680px; margin: 0 auto; }
+  code { overflow-wrap: anywhere; }
   header { display: flex; gap: 14px; align-items: center; }
   header img { width: 56px; height: 56px; border-radius: 12px; }
   h1 { margin: 0; font-size: 26px; } h2 { font-size: 19px; margin-top: 24px; }
@@ -29,9 +30,16 @@
   <a href="https://myaccount.google.com/connections">Third-party apps &amp; services</a>,
   or by choosing <i>Sign out</i> in the add-on.</p>
   <h2>Get it</h2>
-  <p>Download the latest zip from <a href="https://github.com/GDrive-Bridge/gdrive-bridge/releases/latest">Releases</a>, then in Kodi choose
-  <i>Settings &gt; Add-ons &gt; Install from zip file</i>. Open the add-on and choose
-  <i>Set up on phone or computer</i>; the setup page walks you through the rest.</p>
+  <p>Install the GDrive Bridge repository once; Kodi then keeps the add-on up to date. In Kodi:</p>
+  <ol>
+    <li><i>Settings &gt; System &gt; Add-ons</i>: turn on <i>Unknown sources</i>.</li>
+    <li><i>Settings &gt; File manager &gt; Add source</i>: enter <code>https://gdrive-bridge.github.io/gdrive-bridge/repo/</code> and name it <i>GDrive Bridge</i>.</li>
+    <li><i>Settings &gt; Add-ons &gt; Install from zip file &gt; GDrive Bridge</i>: choose <code>repository.gdrivebridge-1.0.0.zip</code>.</li>
+    <li><i>Install from repository &gt; GDrive Bridge Repository</i>: install <i>GDrive Bridge</i>.</li>
+  </ol>
+  <p>Then open the add-on and choose <i>Set up on phone or computer</i>; the setup page walks you through the rest.
+  (Each release is also on <a href="https://github.com/GDrive-Bridge/gdrive-bridge/releases/latest">Releases</a>,
+  but a copy installed from that zip doesn't update itself.)</p>
   <p>Source code and documentation: <a href="https://github.com/GDrive-Bridge/gdrive-bridge">https://github.com/GDrive-Bridge/gdrive-bridge</a></p>
   <p><a href="privacy.html">Privacy policy</a></p>
 </main>
