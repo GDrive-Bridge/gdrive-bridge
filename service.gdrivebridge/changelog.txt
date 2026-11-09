@@ -1,3 +1,13 @@
+Unreleased
+- Setup page: buttons no longer trigger Chrome's "The information you're about to submit is
+  not secure" pop-up (forms are sent by the page's script). The address bar's "Not secure"
+  label remains: the page is plain http on your home network.
+- Setup page: "Settings saved" now shows after saving; re-signing in is easier to find
+  ("Sign in again (or with another account)").
+- Setup guide: the optional "Publish the app" step gives this project's home page and privacy
+  policy URLs, and explains Google's harmless "branding not shown" and "requires
+  verification" notices.
+
 v0.1.1 (2026-11-09)
 - Archive files (.zip, .rar, .7z, .apk and similar) are now hidden from Kodi by default.
   Why: Kodi treats archives as folders. When it lists a folder that contains one, it opens
