@@ -25,9 +25,8 @@ class Monitor(xbmc.Monitor):
 def stall_recorder(stop):
     """Diagnostics: if this add-on's Python can't run for 10 s, faulthandler's C-level
     timer writes every thread's stack to stall.log (works even when the GIL is stuck)."""
-    path = os.path.join(common.profile_dir(), 'stall.log')
     try:
-        f = open(path, 'a')
+        f = open(os.path.join(common.profile_dir(), 'stall.log'), 'a')
         f.write('--- service start %s\n' % time.strftime('%Y-%m-%d %H:%M:%S'))
         f.flush()
         faulthandler.dump_traceback_later(10, repeat=True, file=f)
@@ -47,7 +46,14 @@ def run():
     t = threading.Thread(target=stall_recorder, args=(stop,), name='gdb-stall')
     t.daemon = True
     t.start()
-    bridge = Bridge()
+    try:
+        bridge = Bridge()
+    except RuntimeError as e:
+        # Kodi unloaded the add-on while this copy was still starting (an update at
+        # startup): Kodi starts the new version itself, so just end quietly
+        stop.set()
+        xbmc.log('[%s] not started: %s (being updated?)' % (common.ADDON_ID, e), xbmc.LOGINFO)
+        return
     monitor = Monitor(bridge)
     if monitor.abortRequested():
         # Kodi can stop a service as it starts (an add-on update at startup): start nothing

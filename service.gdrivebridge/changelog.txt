@@ -1,3 +1,14 @@
+v0.3.3 (2026-11-09)
+- Add-on updates install cleanly, including updates Kodi installs right after it starts.
+  0.3.2 could still be talking to Google at that moment and overrun Kodi's 5-second limit
+  for stopping a service; Kodi then never finished the update. Now nothing talks to Google
+  for 15 seconds after start (your saved folders are shown meanwhile), stopping takes well
+  under 2 seconds, and a copy that Kodi replaces while it is still starting ends quietly.
+- Correction to 0.3.2: its note said updates install without hanging; that was only true
+  for updates installed while Kodi was already running.
+- If GDrive Bridge disappears from Kodi after updating from 0.3.2 or earlier, restart Kodi
+  once.
+
 v0.3.2 (2026-11-09)
 - Stops cleanly when Kodi asks: every background task ends within 3 seconds, including a
   request to Google that is waiting for an answer. Before, Kodi sometimes had to kill the

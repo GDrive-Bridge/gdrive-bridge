@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="service.gdrivebridge" name="GDrive Bridge" version="0.3.2" provider-name="GDrive Bridge">
+<addon id="service.gdrivebridge" name="GDrive Bridge" version="0.3.3" provider-name="GDrive Bridge">
   <requires>
     <import addon="xbmc.python" version="3.0.1"/>
     <import addon="script.module.certifi" version="2019.0.0"/>
@@ -13,7 +13,7 @@
     <description lang="en_GB">GDrive Bridge serves your Google Drive (My Drive, Shared with me and Shared drives) to Kodi as a read-only WebDAV source on this device. Add dav://127.0.0.1:8765/ as a video source and Kodi browses, scans and plays it like any network share, with seeking and subtitles.
 
 Set it up from any phone, tablet or computer: open the add-on, scan the QR code and follow the steps. It signs in with your own Google Cloud client, so nothing passes through anyone else's server.</description>
-    <news>v0.3.2: stops cleanly when Kodi asks (faster Kodi exit, and updates install without hanging). v0.3.1: the setup QR code uses the device's current address, even if it changed while Kodi was running. Updates now come from the GDrive Bridge repository. v0.3.0: the setup page opens only when you choose "Set up on phone or computer" in Kodi (upgrades switch to this once; it can be set back to always on); needs Kodi 20 or later. v0.2.0: several Google accounts (one folder each), Starred, Search (add-on menu), iPhone HEIC photos shown as JPEG, and read-ahead so Kodi rarely waits on Google. See changelog.txt.</news>
+    <news>v0.3.3: add-on updates now install cleanly, including the ones Kodi installs at startup. v0.3.2: stops cleanly when Kodi asks (faster Kodi exit). v0.3.1: the setup QR code uses the device's current address, even if it changed while Kodi was running. Updates now come from the GDrive Bridge repository. v0.3.0: the setup page opens only when you choose "Set up on phone or computer" in Kodi (upgrades switch to this once; it can be set back to always on); needs Kodi 20 or later. v0.2.0: several Google accounts (one folder each), Starred, Search (add-on menu), iPhone HEIC photos shown as JPEG, and read-ahead so Kodi rarely waits on Google. See changelog.txt.</news>
     <platform>all</platform>
     <website>https://gdrive-bridge.github.io/gdrive-bridge/</website>
     <source>https://github.com/GDrive-Bridge/gdrive-bridge</source>
