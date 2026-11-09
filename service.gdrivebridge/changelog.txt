@@ -1,3 +1,12 @@
+v0.3.4 (2026-11-10)
+- Menu: "Check for updates" asks Kodi to look for a new version now (with the GDrive Bridge
+  repository installed). A copy installed from a zip file shows "Turn on automatic updates"
+  instead, with the steps to link it to the repository (shown once on its own, too).
+- Menu: "Reset GDrive Bridge" signs out every account (also with Google), clears the cached
+  folders and setup-page logins and restores the default settings with a new PIN. Your Google
+  client ID and secret are kept.
+- Status shows whether updates are automatic.
+
 v0.3.3 (2026-11-09)
 - Add-on updates install cleanly, including updates Kodi installs right after it starts.
   0.3.2 could still be talking to Google at that moment and overrun Kodi's 5-second limit
