@@ -466,7 +466,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             values['lan_password'] = form['lan_password']
         address = form.get('lan_address', '').strip()
         if address and not _is_ipv4(address):
-            errors.append('the network address must look like 192.168.1.20 (or be empty)')
+            errors.append('the network address must look like 192.168.0.20 (or be empty)')
         else:
             values['lan_address'] = address
         relay = form.get('relay_url', '').strip()
