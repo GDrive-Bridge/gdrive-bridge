@@ -225,6 +225,11 @@ class SetupServer(http.server.ThreadingHTTPServer):
             return True
 
 
+def _is_ipv4(text):
+    parts = text.split('.')
+    return len(parts) == 4 and all(p.isdigit() and int(p) <= 255 for p in parts)
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     server_version = 'GDriveBridge'
     sys_version = ''
@@ -459,6 +464,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         values['lan_user'] = form.get('lan_user', '').strip() or 'kodi'
         if form.get('lan_password'):
             values['lan_password'] = form['lan_password']
+        address = form.get('lan_address', '').strip()
+        if address and not _is_ipv4(address):
+            errors.append('the network address must look like 192.168.1.20 (or be empty)')
+        else:
+            values['lan_address'] = address
         relay = form.get('relay_url', '').strip()
         if relay and not (relay.startswith('https://') and len(relay) > 12):
             errors.append('the relay address must start with https://')
@@ -674,6 +684,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     % (key, ' checked' if s[key] else '', label,
                        '<p class="hint">%s</p>' % hint if hint else ''))
 
+        def address_field():
+            return ('<label for="lan_address">This device\'s network address</label>'
+                    '<input id="lan_address" name="lan_address" type="text" inputmode="decimal" '
+                    'value="%s" placeholder="%s"><p class="hint">Used in the QR code and setup '
+                    'address. Leave empty to use the detected address%s; enter one only if '
+                    'that is wrong.</p>'
+                    % (html.escape(s['lan_address']), html.escape(s['lan_address_detected']),
+                       ' (%s)' % html.escape(s['lan_address_detected'])
+                       if s['lan_address_detected'] else ''))
+
         def num(key, label, hint=''):
             return ('<label for="%s">%s</label><input id="%s" name="%s" type="number" value="%d">%s'
                     % (key, label, key, key, s[key], '<p class="hint">%s</p>' % hint if hint else ''))
@@ -721,7 +741,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                html.escape(s['lan_user']),
                'saved (enter to change)' if s['lan_password'] else 'required when sharing',
                '' if s['setup_mode'] else ' selected', ' selected' if s['setup_mode'] else '',
-               num('setup_port', 'Setup page port'),
+               num('setup_port', 'Setup page port') + address_field(),
                html.escape(s['relay_url']),
                num('webdav_port', 'WebDAV port', 'If you change it, update the Kodi source too.'),
                check('debug', 'Detailed logging')))

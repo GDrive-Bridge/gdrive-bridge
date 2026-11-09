@@ -68,6 +68,7 @@ class Bridge(object):
         common.migrate_settings()
         self.settings = common.get_settings()
         self.applied = dict(self.settings)
+        self._refresh_address()
         common.set_debug(self.settings['debug'])
         for account in self.accounts.all():
             self._configure(account)
@@ -212,10 +213,21 @@ class Bridge(object):
                 for account in self.accounts.all():
                     self._configure(account)
             if 'lan_address' in changed:
-                self.address = common.lan_address()
+                self._refresh_address()
             if 'poll_interval' in changed:
                 self.wake.set()
             self.publish()
+
+    def _refresh_address(self):
+        """Look the address up again (it can change while Kodi runs) and show the detected
+        one in the settings, greyed out above the override field."""
+        detected = common.detect_lan_address()
+        address = self.settings['lan_address'].strip() or detected
+        if address != self.address:
+            common.log('home-network address is now %s (was %s)' % (address, self.address))
+            self.address = address
+        if detected != self.settings.get('lan_address_detected'):
+            self.set_settings({'lan_address_detected': detected})
 
     def set_settings(self, values):
         """Save settings from the setup page. The live view updates at once; servers
@@ -234,10 +246,7 @@ class Bridge(object):
             payload = {}
         if command == 'setup':
             # the address can change while Kodi runs (a new DHCP lease); check it for each QR code
-            address = common.lan_address()
-            if address != self.address:
-                common.log('home-network address is now %s (was %s)' % (address, self.address))
-                self.address = address
+            self._refresh_address()
             with self.lock:
                 self.setup_requested = time.time()
                 if self._start_setup() and payload.get('token'):
@@ -346,7 +355,7 @@ class Bridge(object):
                 os.remove(os.path.join(common.profile_dir(), name))
             except OSError:
                 pass
-        keep = ('client_id', 'client_secret', 'relay_url')
+        keep = ('client_id', 'client_secret', 'relay_url', 'lan_address_detected')
         values = {key: default for key, (_, default) in common.SETTINGS.items() if key not in keep}
         self.set_settings(values)   # Kodi then reports the change: servers restart as needed
         common.log('reset to defaults (Google client kept)')

@@ -470,14 +470,17 @@ def test_setup():
     except OSError:
         opened_early = False
     check(not opened_early, 'on-demand: the setup page is closed until Kodi opens it')
-    real_lan_address = common.lan_address
-    common.lan_address = lambda: '192.0.2.20'      # the device got a new address while running
+    real_detect = common.detect_lan_address
+    common.detect_lan_address = lambda: '192.0.2.20'   # the device got a new address while running
     try:
         b.on_notification(common.ADDON_ID, 'Other.setup', json.dumps({'token': 'kodi-qr', 'pin': '246810'}))
+        check(b.status()['setup_url'] == 'http://192.0.2.20:18766/',
+              'the QR code uses the current address, looked up when setup is opened')
+        check(common.get_setting('lan_address_detected') == '192.0.2.20'
+              and common.get_setting('lan_address') == '',
+              'the detected address is shown in the settings; the override stays empty')
     finally:
-        common.lan_address = real_lan_address
-    check(b.status()['setup_url'] == 'http://192.0.2.20:18766/',
-          'the QR code uses the current address, looked up when setup is opened')
+        common.detect_lan_address = real_detect
     s, h, _ = request(18766, 'GET', '/?t=kodi-qr')
     check(s == 303 and 'gdb_session=' in h.get('Set-Cookie', ''),
           'opening it from Kodi starts the page, and its QR link works')
@@ -641,6 +644,22 @@ def test_setup():
           'saved message goes before the #fragment: %s' % h.get('Location'))
     s, h, _ = post('/settings', {'poll_interval': '5', 'webdav_port': '18765', 'setup_port': '18766'})
     check('e=1' in h.get('Location', ''), 'bad values rejected')
+    s, h, body = request(port, 'GET', '/', {'Cookie': cookie})
+    check(b'name="lan_address"' in body and b'placeholder="' in body,
+          'the setup page has the address override, with the detected one as placeholder')
+    base = {'poll_interval': '120', 'webdav_port': '18765', 'setup_port': '18766', 'setup_mode': '0'}
+    s, h, _ = post('/settings', dict(base, lan_address='192.0.2.55'))
+    b.on_settings_changed()
+    check(common.get_setting('lan_address') == '192.0.2.55' and b.status()['setup_url'].startswith('http://192.0.2.55:'),
+          'an address entered on the page overrides the detected one')
+    s, h, _ = post('/settings', dict(base, lan_address='my-shield'))
+    check('e=1' in h.get('Location', '') and common.get_setting('lan_address') == '192.0.2.55',
+          'a malformed address is refused')
+    s, h, _ = post('/settings', dict(base, lan_address=''))
+    b.on_settings_changed()
+    check(common.get_setting('lan_address') == '' and
+          b.status()['setup_url'].startswith('http://%s:' % common.get_setting('lan_address_detected')),
+          'emptying the override goes back to the detected address')
 
     # relay sign-in: Google -> relay page -> /relay on this device, no cookie needed
     b.set_settings({'relay_url': 'https://relay.example/gdb/callback'})

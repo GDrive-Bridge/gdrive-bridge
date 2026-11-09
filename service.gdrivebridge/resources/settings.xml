@@ -120,6 +120,13 @@
           <constraints><minimum>1024</minimum><step>1</step><maximum>65535</maximum></constraints>
           <control type="edit" format="integer"><heading>30038</heading></control>
         </setting>
+        <setting id="lan_address_detected" type="string" label="30060" help="30061">
+          <level>0</level>
+          <default/>
+          <enable>false</enable>
+          <constraints><allowempty>true</allowempty></constraints>
+          <control type="edit" format="string"><heading>30060</heading></control>
+        </setting>
         <setting id="lan_address" type="string" label="30046" help="30047">
           <level>0</level>
           <default/>

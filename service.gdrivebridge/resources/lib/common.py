@@ -38,6 +38,7 @@ SETTINGS = {
     'setup_mode': ('int', 1),          # 0 = always on, 1 = only when opened from Kodi (default)
     'setup_port': ('int', 8766),
     'lan_address': ('str', ''),
+    'lan_address_detected': ('str', ''),   # shown (greyed out) above the override; never read back
     'relay_url': ('str', ''),
     'debug': ('bool', False),
 }
@@ -222,15 +223,17 @@ def set_setting(key, value):
 
 
 def lan_address():
+    """The address for the QR code: the user's override, else the detected one."""
+    return get_setting('lan_address').strip() or detect_lan_address()
+
+
+def detect_lan_address():
     """This device's home-network IPv4 address (not a VPN tunnel's).
 
     Kodi's getIPAddress() can return the VPN address when a VPN app is up, which
     would put an unreachable address in the QR code. Prefer a private address on
     a non-tunnel interface, then fall back to Kodi's answer.
     """
-    override = get_setting('lan_address').strip()
-    if override:
-        return override
     candidates = []
     try:
         import subprocess

@@ -110,11 +110,11 @@ msgid "Setup page"
 msgstr ""
 
 msgctxt "#30046"
-msgid "This device's network address"
+msgid "Network address (override)"
 msgstr ""
 
 msgctxt "#30047"
-msgid "Shown in the QR code and setup address. Leave empty to detect it (VPN tunnels are skipped)."
+msgid "Leave empty to use the detected address above. Enter an address only if the QR code shows one your phone can't reach."
 msgstr ""
 
 msgctxt "#30048"
@@ -155,4 +155,12 @@ msgstr ""
 
 msgctxt "#30057"
 msgid "Kodi can't display HEIC photos; Google's JPEG version is shown instead."
+msgstr ""
+
+msgctxt "#30060"
+msgid "Detected network address"
+msgstr ""
+
+msgctxt "#30061"
+msgid "Found automatically when the service starts and each time you open setup (VPN tunnels are skipped). Used in the QR code unless you enter an override below."
 msgstr ""
