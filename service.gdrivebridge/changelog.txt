@@ -1,4 +1,4 @@
-Unreleased
+v0.3.0 (2026-11-09)
 - The setup page now opens only when you choose "Set up on phone or computer" in Kodi, and
   closes after 15 minutes idle. Safer default for a page on your home network. Upgrading
   switches an always-on page to this once; set Available back to "Always" in the settings if
@@ -50,9 +50,9 @@ v0.1.1 (2026-11-09)
   stops responding, for tens of seconds per archive. Kodi can't play archives anyway, so
   hiding them costs nothing. To show them again, turn off "Hide archives" in the Drive
   settings or on the setup page.
-- Files and folders whose names start with a dot (.git, .ipynb_checkpoints...) are
-  hidden by default ("Hide files and folders starting with a dot"). Kodi otherwise scanned
-  their contents, and treats .ts code files as video.
+- Files and folders whose names start with a dot (.git...) are hidden by default ("Hide
+  files and folders starting with a dot"). Kodi otherwise scanned their contents, and treats
+  .ts code files as video.
 - Fixed the first sync failing with "Invalid field selection sharedWithMe".
 - A sign-in in progress now survives a Kodi restart.
 - The setup guide now includes adding yourself as a test user, and makes publishing the

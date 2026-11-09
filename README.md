@@ -83,7 +83,7 @@ All settings are on the setup page and in Kodi's add-on settings:
 |---|---|---|
 | Show *Shared with me* / *Shared drives* / *Starred* | on | Top-level folders. Don't give the top level a content type: starred items would be scanned twice |
 | Show iPhone HEIC photos as JPEG | on | Uses Google's JPEG rendering (up to 3840 px) |
-| Hide files and folders starting with a dot | on | `.git`, `.ipynb_checkpoints`… |
+| Hide files and folders starting with a dot | on | `.git`… |
 | Hide archives (.zip, .rar, .7z, .apk…) | on | See below |
 | Check Drive for changes every | 60 s | |
 | WebDAV port | 8765 | Update your Kodi source if you change it |

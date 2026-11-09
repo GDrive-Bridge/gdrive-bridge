@@ -396,7 +396,7 @@ class DriveTree(object):
 
     def _entry(self, cid, n):
         if self.hide_dot and n['n'].startswith('.'):
-            return None             # .git, .ipynb_checkpoints, .DS_Store...
+            return None             # .git, .DS_Store...
         mime = n['m']
         if self.hide_archives and mime != FOLDER_MIME and n['n'].lower().endswith(ARCHIVE_EXTS):
             return None

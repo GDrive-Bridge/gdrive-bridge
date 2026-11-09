@@ -138,7 +138,7 @@ msgid "Hide files and folders starting with a dot"
 msgstr ""
 
 msgctxt "#30051"
-msgid "Hides things like .git or .ipynb_checkpoints that aren't media."
+msgid "Hides things like .git that aren't media."
 msgstr ""
 
 msgctxt "#30052"

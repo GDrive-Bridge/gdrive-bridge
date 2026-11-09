@@ -681,8 +681,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                check('heic_as_jpeg', 'Show iPhone HEIC photos as JPEG',
                      'Kodi can\'t display HEIC; Google\'s JPEG version is shown instead.'),
                check('hide_dot', 'Hide files and folders starting with a dot',
-                     'Hides things like <i>.git</i> or <i>.ipynb_checkpoints</i> that '
-                     'aren\'t media.'),
+                     'Hides things like <i>.git</i> that aren\'t media.'),
                check('hide_archives', 'Hide archives (.zip, .rar, .7z, .apk...)',
                      'Kodi opens archives like folders, reading them over the internet, which '
                      'makes folders slow to open.'),
