@@ -443,10 +443,29 @@ def test_setup():
     a = xbmcaddon.Addon(common.ADDON_ID)
     a.setSettingInt('webdav_port', 18765)
     a.setSettingInt('setup_port', 18766)
+    check(common.get_setting('setup_mode') == common.SETUP_ON_DEMAND,
+          'setup page defaults to "only when opened from Kodi"')
     emails = iter(['tester@example.com', 'second@example.com', 'second@example.com',
                    'third@example.com'])
     b = bridge_mod.Bridge(drive_factory=lambda creds: FakeDrive(next(emails)))
     b.start()
+    s_, h_, _ = (None, None, None)
+    try:
+        request(18766, 'GET', '/')
+        opened_early = True
+    except OSError:
+        opened_early = False
+    check(not opened_early, 'on-demand: the setup page is closed until Kodi opens it')
+    b.on_notification(common.ADDON_ID, 'Other.setup', json.dumps({'token': 'kodi-qr'}))
+    s, h, _ = request(18766, 'GET', '/?t=kodi-qr')
+    check(s == 303 and 'gdb_session=' in h.get('Set-Cookie', ''),
+          'opening it from Kodi starts the page, and its QR link works')
+    b.setup_requested = 0
+    b.setup.last_activity = 0
+    b.tick()
+    check(b.setup is None, 'on-demand: the page closes again after 15 minutes idle')
+    a.setSettingInt('setup_mode', common.SETUP_ALWAYS)   # rest of the tests: always on
+    b.on_settings_changed()
     port = 18766
     pin = common.get_setting('setup_pin')
     check(pin.isdigit() and len(pin) == 6, 'PIN generated: %s' % pin)
@@ -658,9 +677,13 @@ def test_setup():
 
 
 try:
-    test_webdav()
-    test_read_ahead()
-    test_setup()
+    for test in (test_webdav, test_read_ahead, test_setup):
+        try:
+            test()
+        except Exception:               # a crash is a failure, not a silent skip
+            import traceback
+            traceback.print_exc()
+            FAILS.append('%s crashed' % test.__name__)
 finally:
     shutil.rmtree(TMP, ignore_errors=True)
 print('\n%d failure(s)' % len(FAILS))

@@ -32,7 +32,7 @@ SETTINGS = {
     'lan_share': ('bool', False),
     'lan_user': ('str', 'kodi'),
     'lan_password': ('str', ''),
-    'setup_mode': ('int', 0),          # 0 = always on, 1 = only when opened from Kodi
+    'setup_mode': ('int', 1),          # 0 = always on, 1 = only when opened from Kodi (default)
     'setup_port': ('int', 8766),
     'setup_pin': ('str', ''),
     'lan_address': ('str', ''),

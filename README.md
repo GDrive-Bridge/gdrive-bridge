@@ -21,7 +21,7 @@ Drive like any network share, with seeking and subtitles.
   through anyone else's server.
 - **Read-only** (`drive.readonly`). It never changes or deletes anything in your Drive.
 
-Tested on Kodi 21 (Omega) on an NVIDIA Shield (Android TV). It needs Kodi 19 or later.
+Tested on Kodi 21 (Omega) on an NVIDIA Shield (Android TV). It needs Kodi 20 or later.
 
 ## Install
 
@@ -88,7 +88,7 @@ All settings are on the setup page and in Kodi's add-on settings:
 | Check Drive for changes every | 60 s | |
 | WebDAV port | 8765 | Update your Kodi source if you change it |
 | Share Drive with other devices on my network | off | Basic-auth WebDAV for another Kodi |
-| Setup page | always on, port 8766 | PIN or one-time QR link needed |
+| Setup page | opens when you choose *Set up on phone or computer* in Kodi and closes after 15 minutes idle; can be set to always on (port 8766) | PIN or one-time QR link needed |
 
 **Why archives are hidden:** Kodi treats `.zip`/`.rar`/`.apk` files as folders and opens them to
 look inside, on its screen thread, when it lists a folder. Over Google Drive each read is a
