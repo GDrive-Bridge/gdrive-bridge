@@ -59,6 +59,7 @@ class Bridge(object):
     # ---- lifecycle ------------------------------------------------------
     def start(self):
         common.ensure_pin()
+        common.migrate_settings()
         self.settings = common.get_settings()
         self.applied = dict(self.settings)
         common.set_debug(self.settings['debug'])

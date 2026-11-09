@@ -445,6 +445,19 @@ def test_setup():
     a.setSettingInt('setup_port', 18766)
     check(common.get_setting('setup_mode') == common.SETUP_ON_DEMAND,
           'setup page defaults to "only when opened from Kodi"')
+    # upgraded installs: an always-on page is switched to on demand once, never again
+    rev = os.path.join(common.profile_dir(), 'settings_rev')
+    if os.path.exists(rev):
+        os.remove(rev)
+    a.setSettingInt('setup_mode', common.SETUP_ALWAYS)
+    common.migrate_settings()
+    check(common.get_setting('setup_mode') == common.SETUP_ON_DEMAND,
+          'an upgraded always-on install is switched to on demand')
+    a.setSettingInt('setup_mode', common.SETUP_ALWAYS)
+    common.migrate_settings()
+    check(common.get_setting('setup_mode') == common.SETUP_ALWAYS,
+          '...once only: choosing always on again afterwards is kept')
+    a.setSettingInt('setup_mode', common.SETUP_ON_DEMAND)
     emails = iter(['tester@example.com', 'second@example.com', 'second@example.com',
                    'third@example.com'])
     b = bridge_mod.Bridge(drive_factory=lambda creds: FakeDrive(next(emails)))

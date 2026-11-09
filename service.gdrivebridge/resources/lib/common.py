@@ -98,6 +98,28 @@ def get_setting(key, a=None):
         return default
 
 
+SETTINGS_REV = 1
+
+
+def migrate_settings():
+    """One-time changes for installs upgraded from older versions. Kodi keeps a saved
+    value even when the add-on's default changes, so a new default needs this."""
+    path = os.path.join(profile_dir(), 'settings_rev')
+    try:
+        with open(path) as f:
+            rev = int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        rev = 0
+    if rev >= SETTINGS_REV:
+        return
+    if rev < 1 and get_setting('setup_mode') == SETUP_ALWAYS:
+        # 0.3.0: the setup page opens only from Kodi's menu (it used to be always on)
+        set_setting('setup_mode', SETUP_ON_DEMAND)
+        log('setup page now opens only from the menu; it can be set back to always on')
+    with open(path, 'w') as f:
+        f.write(str(SETTINGS_REV))
+
+
 def get_settings():
     a = addon()
     return {key: get_setting(key, a) for key in SETTINGS}

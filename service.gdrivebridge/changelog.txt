@@ -1,7 +1,8 @@
 Unreleased
-- New installs: the setup page opens only when you choose "Set up on phone or computer" in
-  Kodi, and closes after 15 minutes idle (it can still be set to always on). Safer default for
-  a page on your home network. Existing installs keep the setting they had.
+- The setup page now opens only when you choose "Set up on phone or computer" in Kodi, and
+  closes after 15 minutes idle. Safer default for a page on your home network. Upgrading
+  switches an always-on page to this once; set Available back to "Always" in the settings if
+  you prefer it.
 - Passes Kodi's add-on checker for Kodi 21 and 22: needs Kodi 20 or later (xbmc.python
   3.0.1); the service starts at profile login; slim entry points; website and source links.
 
