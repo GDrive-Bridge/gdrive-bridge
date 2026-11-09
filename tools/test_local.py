@@ -409,11 +409,25 @@ def test_setup():
                 for f in ('webdav.py', 'cache.py', 'drive.py', 'auth.py', 'setup.py'))
     check('xbmcgui' not in src, 'service code never touches xbmcgui (GUI-lock deadlock guard)')
 
+    # the page's script posts with X-GDB-Fetch and gets JSON instead of a 303 (no Chrome warning)
+    s, h, body = request(port, 'POST', '/refresh', {'Cookie': cookie, 'X-GDB-Fetch': '1',
+                         'Content-Type': 'application/x-www-form-urlencoded'},
+                         urllib.parse.urlencode({'csrf': csrf}))
+    check(s == 200 and json.loads(body)['location'].startswith('/?m='),
+          'script-sent form gets JSON with the next address')
+    s, h, body = request(port, 'POST', '/login', {'X-GDB-Fetch': '1',
+                         'Content-Type': 'application/x-www-form-urlencoded'}, 'pin=' + pin)
+    check(s == 200 and 'gdb_session=' in h.get('Set-Cookie', ''), 'script-sent login still sets the cookie')
+    s, h, body = request(port, 'GET', '/', {'Cookie': cookie})
+    check(b"addEventListener('submit'" in body, 'pages include the form script')
+
     s, h, _ = post('/settings', {'show_shared': 'on', 'poll_interval': '120', 'webdav_port': '18765',
                                  'setup_port': '18766', 'setup_mode': '0', 'lan_user': 'kodi',
                                  'setup_pin': pin})
     check(not common.get_setting('show_drives') and common.get_setting('poll_interval') == 120,
           'settings saved from the page')
+    check(h.get('Location', '').startswith('/?m=Settings') and h['Location'].endswith('#settings'),
+          'saved message goes before the #fragment: %s' % h.get('Location'))
     s, h, _ = post('/settings', {'poll_interval': '5', 'webdav_port': '18765', 'setup_port': '18766',
                                  'setup_pin': '12'})
     check('e=1' in h.get('Location', ''), 'bad values rejected')

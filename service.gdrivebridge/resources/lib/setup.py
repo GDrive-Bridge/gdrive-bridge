@@ -59,6 +59,29 @@ OPTIONAL_STEP = (
     'instead. Afterwards, sign '
     'in here once more: sign-ins made while testing still expire after 7 days.')
 
+# Chrome warns "The information you're about to submit is not secure" for every classic
+# form POST over http. The same POST sent by fetch() doesn't warn, so forms go through
+# this; without JavaScript they still submit normally.
+SCRIPT = """
+document.addEventListener('submit', function (e) {
+  var f = e.target;
+  if (!window.fetch || (f.getAttribute('method') || '').toLowerCase() !== 'post') return;
+  e.preventDefault();
+  var b = f.querySelector('button');
+  if (b) b.disabled = true;
+  fetch(f.action, {method: 'POST', credentials: 'same-origin',
+                   headers: {'X-GDB-Fetch': '1'}, body: new URLSearchParams(new FormData(f))})
+    .then(function (r) {
+      var type = r.headers.get('Content-Type') || '';
+      if (type.indexOf('application/json') === 0) {
+        return r.json().then(function (d) { window.location.assign(d.location); });
+      }
+      return r.text().then(function (t) { document.open(); document.write(t); document.close(); });
+    })
+    .catch(function () { if (b) b.disabled = false; f.submit(); });
+});
+"""
+
 CSS = """
 :root{--bg:#f4f6f8;--card:#fff;--fg:#1d2733;--muted:#5d6b7a;--line:#dde3e9;--accent:#17b2e7;
 --btn:#1a73e8;--ok:#1e8e3e;--warn:#b06000;--err:#c5221f;--field:#fff}
@@ -180,11 +203,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _redirect(self, location, cookie=None, msg=None):
+        path, _, fragment = location.partition('#')
         if msg:
-            location += ('&' if '?' in location else '?') + urllib.parse.urlencode({'m': msg})
-        headers = {'Location': location}
+            path += ('&' if '?' in path else '?') + urllib.parse.urlencode({'m': msg})
+        location = path + ('#' + fragment if fragment else '')
+        headers = {}
         if cookie is not None:
             headers['Set-Cookie'] = cookie
+        if self.headers.get('X-GDB-Fetch'):
+            # sent by the page's script: answer with the next address instead of a redirect
+            self._send(200, json.dumps({'location': location}), ctype='application/json',
+                       headers=headers)
+            return
+        headers['Location'] = location
         self._send(303, '', headers=headers)
 
     def _form(self):
@@ -369,8 +400,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 '<meta name="viewport" content="width=device-width,initial-scale=1">'
                 '<title>GDrive Bridge</title><link rel="icon" href="/icon.png">'
                 '<style>%s</style></head><body><main><header><img src="/icon.png" alt="">'
-                '<div><h1>GDrive Bridge</h1><small>%s</small></div></header>%s</main></body></html>'
-                % (CSS, html.escape(subtitle or 'Google Drive for Kodi'), body))
+                '<div><h1>GDrive Bridge</h1><small>%s</small></div></header>%s</main>'
+                '<script>%s</script></body></html>'
+                % (CSS, html.escape(subtitle or 'Google Drive for Kodi'), body, SCRIPT))
 
     def _login_page(self, message=None):
         msg = '<div class="msg bad">%s</div>' % html.escape(message) if message else ''
