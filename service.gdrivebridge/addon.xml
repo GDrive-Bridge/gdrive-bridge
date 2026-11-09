@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="service.gdrivebridge" name="GDrive Bridge" version="0.1.1" provider-name="GDrive Bridge">
+<addon id="service.gdrivebridge" name="GDrive Bridge" version="0.1.2" provider-name="GDrive Bridge">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
     <import addon="script.module.certifi" version="2019.0.0"/>
@@ -13,7 +13,7 @@
     <description lang="en_GB">GDrive Bridge serves your Google Drive (My Drive, Shared with me and Shared drives) to Kodi as a read-only WebDAV source on this device. Add dav://127.0.0.1:8765/ as a video source and Kodi browses, scans and plays it like any network share, with seeking and subtitles.
 
 Set it up from any phone, tablet or computer: open the add-on, scan the QR code and follow the steps. It signs in with your own Google Cloud client, so nothing passes through anyone else's server.</description>
-    <news>v0.1.1: archive files (.zip, .rar, .apk...) are hidden by default. Kodi opens archives like folders on its screen thread, and over Google Drive each read takes a second or two, so a folder containing one froze Kodi on "Content Loading". Dot-folders are hidden too, plus sign-in and stability fixes. See changelog.txt.</news>
+    <news>v0.1.2: sign-in finishes by itself (Web application client + this project's relay page; your secret and sign-in never leave your Kodi device). Pick the client JSON file from your phone instead of pasting it. No more "not secure" pop-ups on the setup page's buttons, and it stays logged in when opened from another app. v0.1.1: archives and dot-files hidden (they froze Kodi). See changelog.txt.</news>
     <platform>all</platform>
     <license>MIT</license>
     <assets>

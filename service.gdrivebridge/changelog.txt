@@ -1,4 +1,4 @@
-Unreleased
+v0.1.2 (2026-11-09)
 - Setup page: stays logged in when opened from a link in another app (the login cookie
   was SameSite=Strict, which browsers don't send in that case).
 - Setup page: "Choose the downloaded JSON file" picks the client file (on an iPhone, from
