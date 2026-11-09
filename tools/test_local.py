@@ -353,7 +353,9 @@ def test_webdav():
     labels = [urllib.parse.unquote(e[0].rsplit('/', 1)[-1]) for e in mv[1:]]
     check('New.mkv' in labels and 'Amelie.mkv' in labels and 'Clip (2).mp4' not in labels
           and 'Clip.mp4' in labels, 'changes applied without re-listing: %s' % labels)
-    check(len(fd.calls) == n_calls, 'no extra Drive calls after the change feed')
+    # (opening Movies also reads ahead its subfolder in the background; only re-listing counts)
+    relisted = [c for c in fd.calls[n_calls:] if c[0] == 'children' and c[1] == 'movies']
+    check(not relisted, 'Movies is not listed again after the change feed: %s' % relisted)
     propfind(port, '/Starred/')
     fd.files['tv']['starred'] = True
     fd.changes_q = [{'fileId': 'tv', 'file': fd._pub(fd.files['tv'])}]
@@ -367,8 +369,9 @@ def test_webdav():
     tree.sync()
     st, ep = propfind(port, '/Shared%20with%20me/TV/')
     st, mv = propfind(port, '/My%20Drive/Movies/')
-    check(not any('srt' in e[0] for e in mv) and len(fd.calls) == n_calls,
-          'moved file leaves its old folder, still no extra Drive calls')
+    relisted = [c for c in fd.calls[n_calls:] if c[0] == 'children' and c[1] in ('movies', 'tv')]
+    check(not any('srt' in e[0] for e in mv) and not relisted,
+          'moved file leaves its old folder, still without re-listing either folder: %s' % relisted)
     check(any('srt' in e[0] for e in ep), 'moved file appears in its new folder')
 
     # persistence
