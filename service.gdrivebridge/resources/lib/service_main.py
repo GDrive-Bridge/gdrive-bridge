@@ -49,12 +49,40 @@ def run():
     t.start()
     bridge = Bridge()
     monitor = Monitor(bridge)
-    bridge.start()
-    common.log('started')
+    if monitor.abortRequested():
+        # Kodi can stop a service as it starts (an add-on update at startup): start nothing
+        common.log('stop requested before start')
+    else:
+        bridge.start()
+        common.log('started')
     while not monitor.abortRequested():
         if monitor.waitForAbort(1):
             break
         bridge.tick()
-    bridge.stop()
-    stop.set()
-    common.log('stopped')
+    started = time.time()
+    try:
+        bridge.stop()
+    finally:
+        stop.set()
+        t.join(3)
+        report_survivors(time.time() - started)
+
+
+def report_survivors(took):
+    """Kodi waits for every thread of this script before it can finish stopping it (and
+    install an update), so name any that are still running, with their stacks."""
+    me = threading.current_thread()
+    left = [t for t in threading.enumerate() if t is not me]
+    if not left:
+        common.log('stopped (%.1f s)' % took)
+        return
+    common.log('stopped (%.1f s), but threads still running: %s'
+               % (took, ', '.join(t.name for t in left)), xbmc.LOGWARNING)
+    try:
+        with open(os.path.join(common.profile_dir(), 'stall.log'), 'a') as f:
+            f.write('--- threads left at stop %s: %s\n'
+                    % (time.strftime('%Y-%m-%d %H:%M:%S'), ', '.join(t.name for t in left)))
+            f.flush()
+            faulthandler.dump_traceback(file=f, all_threads=True)
+    except Exception as e:
+        common.log('could not record the threads: %r' % e)

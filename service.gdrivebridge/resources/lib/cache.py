@@ -232,6 +232,8 @@ class DriveTree(object):
 
     def _ensure_prefetcher(self):
         # caller holds self.lock
+        if common.stopping.is_set():
+            return
         if self.prefetch_thread is None or not self.prefetch_thread.is_alive():
             self.prefetch_thread = threading.Thread(target=self._prefetch_loop,
                                                     name='gdb-prefetch')
@@ -317,7 +319,7 @@ class DriveTree(object):
 
     def _prefetch_loop(self):
         idle_since = time.time()
-        while True:
+        while not common.stopping.is_set():
             with self.lock:
                 key = self.prefetch_queue.popleft() if self.prefetch_queue else None
             if key is None:

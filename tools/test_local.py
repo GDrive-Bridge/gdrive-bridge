@@ -696,8 +696,73 @@ def test_setup():
     b.stop()
 
 
+def test_shutdown():
+    """Kodi can't finish stopping the service (or install an update) while any of its
+    threads is still running (11-09). stop() must end them all, quickly."""
+    print('\n== Stopping ==')
+    import socket
+    import time
+    from resources.lib import bridge as bridge_mod
+    from resources.lib import drive as drive_mod
+
+    class Creds(FakeCreds):
+        def access_token(self, force=False):
+            return 'token'
+
+    # accepts connections (via the backlog) but never answers: a Google request that hangs
+    hole = socket.socket()
+    hole.bind(('127.0.0.1', 0))
+    hole.listen(8)
+    real_host = drive_mod.HOST
+    drive_mod.HOST = '127.0.0.1:%d' % hole.getsockname()[1]
+    a = xbmcaddon.Addon(common.ADDON_ID)
+    a.setSettingInt('webdav_port', 18765)
+    b = bridge_mod.Bridge(drive_factory=lambda creds: FakeDrive())
+    b.start()
+    kodi = None
+    try:
+        # Kodi keeps its WebDAV connection open between requests
+        kodi = http.client.HTTPConnection('127.0.0.1', 18765, timeout=10)
+        kodi.request('OPTIONS', '/')
+        kodi.getresponse().read()
+        errors = []
+
+        def google():
+            try:
+                drive_mod.Drive(Creds()).call('/files')
+            except Exception as e:
+                errors.append(e)
+        t = threading.Thread(target=google, name='test-google')
+        t.start()
+        time.sleep(0.5)
+        started = time.time()
+        b.stop()
+        took = time.time() - started
+        left = [x.name for x in threading.enumerate() if x is not threading.main_thread()]
+        check(took < 3.5 and not left,
+              'stop() ends every thread within 3 s (took %.1f s, left: %s)' % (took, left))
+        check(errors and isinstance(errors[0], DriveError),
+              'a Google request that never answers is interrupted: %r' % errors)
+    finally:
+        if kodi:
+            kodi.close()
+        drive_mod.HOST = real_host
+        hole.close()
+        common.stopping.clear()
+
+    # a stop before start (Kodi updating the add-on as it starts) must not wipe the cache
+    tree_path = os.path.join(common.profile_dir(), 'cache.json')
+    common.write_json(tree_path, {'v': -1, 'marker': True})
+    b2 = bridge_mod.Bridge(drive_factory=lambda creds: FakeDrive())
+    b2.stop()
+    check((common.read_json(tree_path) or {}).get('marker'),
+          'stopping a service that never started leaves the saved cache alone')
+    os.remove(tree_path)
+    common.stopping.clear()
+
+
 try:
-    for test in (test_webdav, test_read_ahead, test_setup):
+    for test in (test_shutdown, test_webdav, test_read_ahead, test_setup):
         try:
             test()
         except Exception:               # a crash is a failure, not a silent skip

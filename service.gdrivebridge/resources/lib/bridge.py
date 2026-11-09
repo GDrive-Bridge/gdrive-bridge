@@ -15,6 +15,7 @@ from .setup import SetupServer
 from .webdav import WebDAVServer
 
 SETUP_IDLE = 15 * 60
+STOP_TIMEOUT = 3        # seconds stop() waits for threads (Kodi kills scripts after 5)
 
 
 class Bridge(object):
@@ -31,9 +32,10 @@ class Bridge(object):
         self.setup_error = ''
         self.setup_requested = 0
         self.wake = threading.Event()
-        self.stopping = threading.Event()
+        self.stopping = common.stopping
         self.lock = threading.RLock()
         self.sync_thread = None
+        self.started = False
         self._published = None
         self.main_actions = []          # Kodi calls to make from the service's main thread
         self.address = common.lan_address()
@@ -58,6 +60,8 @@ class Bridge(object):
 
     # ---- lifecycle ------------------------------------------------------
     def start(self):
+        self.stopping.clear()
+        self.started = True
         common.ensure_pin()
         common.migrate_settings()
         self.settings = common.get_settings()
@@ -74,14 +78,30 @@ class Bridge(object):
         self.sync_thread.start()
         self.publish()
 
-    def stop(self):
+    def stop(self, timeout=STOP_TIMEOUT):
+        """Stop everything and wait (up to `timeout`) for every thread this service started.
+        Kodi won't finish stopping us, or install an update, while one is still running."""
         self.stopping.set()
         self.wake.set()
+        for account in self.accounts.all():
+            account.tree.prefetch_wake.set()
         self._stop_setup()
         self._stop_webdav()
+        common.abort_network()
+        deadline = time.time() + timeout
+        me = threading.current_thread()
+        for t in threading.enumerate():
+            if t is not me and t is not threading.main_thread() and t.name != 'gdb-stall':
+                t.join(max(0, deadline - time.time()))
+        # save only once the sync has finished, never a tree it is still changing
+        # (and never an unloaded one: that would overwrite the saved cache)
+        synced = self.sync_thread is None or not self.sync_thread.is_alive()
         for account in self.accounts.all():
-            account.tree.save(force=True)
+            if synced and self.started:
+                account.tree.save(force=True)
             account.drive.pool.clear()
+        if not synced:
+            common.log('sync still running at stop; cache not saved', xbmc.LOGWARNING)
         try:
             os.remove(common.status_path())
         except OSError:
@@ -157,8 +177,7 @@ class Bridge(object):
 
     def _stop_setup(self):
         if self.setup:
-            self.setup.shutdown()
-            self.setup.server_close()
+            self.setup.close_all()
             self.setup = None
 
     # ---- events ---------------------------------------------------------
@@ -323,6 +342,8 @@ class Bridge(object):
     def _sync_loop(self):
         while not self.stopping.is_set():
             for account in self.accounts.all():
+                if self.stopping.is_set():
+                    break
                 if not account.creds.signed_in:
                     continue
                 tree = account.tree
@@ -341,6 +362,8 @@ class Bridge(object):
                     tree.last_error = 'internal error: %s' % e
                     common.log('sync crashed (%s): %r' % (account.id, e), xbmc.LOGERROR)
                 tree.save()
+            if self.stopping.is_set():
+                break
             self._check_expiry()
             self.publish()
             self.wake.wait(max(15, self.settings['poll_interval']))

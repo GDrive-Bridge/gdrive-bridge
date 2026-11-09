@@ -6,9 +6,7 @@ import os
 import secrets
 import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 
 from . import common
 
@@ -39,18 +37,11 @@ def token_path():
 
 
 def _post(url, fields):
-    data = urllib.parse.urlencode(fields).encode()
-    req = urllib.request.Request(url, data=data, headers={
-        'Content-Type': 'application/x-www-form-urlencoded'})
+    status, body = common.https_post(url, fields)
     try:
-        with urllib.request.urlopen(req, timeout=30, context=common.ssl_context()) as resp:
-            body = resp.read()
-            return resp.status, (json.loads(body) if body else {})
-    except urllib.error.HTTPError as e:
-        try:
-            return e.code, json.loads(e.read() or b'{}')
-        except ValueError:
-            return e.code, {}
+        return status, (json.loads(body) if body else {})
+    except ValueError:
+        return status, {}
 
 
 def _b64url(raw):

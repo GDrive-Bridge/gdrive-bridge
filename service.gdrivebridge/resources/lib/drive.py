@@ -31,6 +31,17 @@ class DriveError(Exception):
         self.reason = reason
 
 
+def _pause(seconds):
+    """Wait before a retry; give up at once when the service is stopping."""
+    if common.stopping.wait(seconds):
+        raise DriveError(0, 'stopping', 'the service is stopping')
+
+
+def _check_stopping():
+    if common.stopping.is_set():
+        raise DriveError(0, 'stopping', 'the service is stopping')
+
+
 class _Pool(object):
     def __init__(self, size=6):
         self.lock = threading.Lock()
@@ -45,7 +56,7 @@ class _Pool(object):
                 if now - t < IDLE_MAX:
                     return conn
                 conn.close()
-        return http.client.HTTPSConnection(HOST, timeout=30, context=common.ssl_context())
+        return common.https_connection(HOST, 30)
 
     def put(self, conn):
         with self.lock:
@@ -81,6 +92,7 @@ class Drive(object):
         refreshed = force = False
         delay = 1.0
         for attempt in range(retries + 1):
+            _check_stopping()
             token = self.creds.access_token(force=force)
             force = False
             conn = self.pool.get()
@@ -95,7 +107,7 @@ class Drive(object):
             except (OSError, http.client.HTTPException) as e:
                 conn.close()
                 if attempt < retries:
-                    time.sleep(delay)
+                    _pause(delay)
                     delay *= 2
                     continue
                 raise DriveError(0, 'network', str(e))
@@ -113,7 +125,7 @@ class Drive(object):
                 continue
             if attempt < retries and (resp.status in (429, 500, 502, 503, 504) or (
                     resp.status == 403 and reason in ('rateLimitExceeded', 'userRateLimitExceeded'))):
-                time.sleep(delay)
+                _pause(delay)
                 delay *= 2
                 continue
             raise DriveError(resp.status, reason, message)
@@ -238,6 +250,7 @@ class Drive(object):
         params = {'alt': 'media', 'supportsAllDrives': 'true'}
         refreshed = force = False
         for attempt in range(4):
+            _check_stopping()
             token = self.creds.access_token(force=force)
             force = False
             headers = {'Authorization': 'Bearer ' + token, 'User-Agent': USER_AGENT}
@@ -252,7 +265,7 @@ class Drive(object):
             except (OSError, http.client.HTTPException) as e:
                 conn.close()
                 if attempt < 3:
-                    time.sleep(0.5)
+                    _pause(0.5)
                     continue
                 raise DriveError(0, 'network', str(e))
             if resp.status in (200, 206, 416):
@@ -268,7 +281,7 @@ class Drive(object):
                 params['acknowledgeAbuse'] = 'true'
                 continue
             if resp.status in (500, 502, 503, 504) and attempt < 3:
-                time.sleep(1)
+                _pause(1)
                 continue
             raise DriveError(resp.status, reason, message)
         raise DriveError(0, 'retries', 'gave up')

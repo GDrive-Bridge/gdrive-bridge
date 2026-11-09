@@ -103,9 +103,9 @@ class FakeCreds(object):
 srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H)
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 port = srv.server_address[1]
-drive_mod.http.client.HTTPSConnection = \
-    lambda host, timeout=None, context=None: http.client.HTTPConnection('127.0.0.1', port, timeout=timeout)
-drive_mod.time.sleep = lambda s: None
+drive_mod.common.https_connection = \
+    lambda host, timeout=30: http.client.HTTPConnection('127.0.0.1', port, timeout=timeout)
+drive_mod._pause = lambda s: None       # no real waits between retries
 
 creds = FakeCreds()
 d = drive_mod.Drive(creds)

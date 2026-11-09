@@ -9,6 +9,7 @@ import http.server
 import json
 import os
 import secrets
+import socket
 import threading
 import time
 import urllib.parse
@@ -145,7 +146,31 @@ class SetupServer(http.server.ThreadingHTTPServer):
         self.links = {}
         self.failures = []
         self.last_activity = time.time()
+        self.conns = set()
+        self.conns_lock = threading.Lock()
         http.server.ThreadingHTTPServer.__init__(self, address, Handler)
+
+    def process_request(self, request, client_address):
+        with self.conns_lock:
+            self.conns.add(request)
+        http.server.ThreadingHTTPServer.process_request(self, request, client_address)
+
+    def shutdown_request(self, request):
+        with self.conns_lock:
+            self.conns.discard(request)
+        http.server.ThreadingHTTPServer.shutdown_request(self, request)
+
+    def close_all(self):
+        """Stop serving and drop open connections, so no handler thread outlives the page."""
+        self.shutdown()
+        with self.conns_lock:
+            conns = list(self.conns)
+        for sock in conns:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        self.server_close()
 
     def add_link(self, token):
         with self.lock:

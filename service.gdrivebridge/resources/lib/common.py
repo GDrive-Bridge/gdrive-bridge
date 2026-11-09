@@ -3,8 +3,11 @@ import calendar
 import json
 import os
 import secrets
+import socket
 import ssl
+import threading
 import time
+import weakref
 
 import xbmc
 import xbmcaddon
@@ -64,7 +67,76 @@ def profile_dir():
     return _paths['profile']
 
 
+# ---- stopping -----------------------------------------------------------
+# Kodi waits, with no time limit, for every thread of a stopping service to end, and an
+# add-on update waits for that (11-09: an update hung there). Its kill only reaches threads
+# running Python, not ones blocked in a socket or a Kodi call. So when the service stops,
+# every loop and retry checks `stopping`, open Google connections are cut, and background
+# threads stop calling into Kodi.
+stopping = threading.Event()
+_connections = weakref.WeakSet()       # outgoing HTTPS connections, cut by abort_network()
+_connections_lock = threading.Lock()
+
+
+def track(conn):
+    """Register an http.client connection so abort_network() can interrupt it."""
+    with _connections_lock:
+        _connections.add(conn)
+    return conn
+
+
+def https_connection(host, timeout=30):
+    """A tracked HTTPS connection whose TLS handshake can be interrupted too.
+
+    http.client's own connect() only sets `sock` once the handshake is done (the plain
+    socket is closed into the TLS one), so a stalled handshake couldn't be cut."""
+    import http.client
+
+    class Connection(http.client.HTTPSConnection):
+        def connect(self):
+            http.client.HTTPConnection.connect(self)
+            self.sock = ssl_context().wrap_socket(self.sock, server_hostname=self.host,
+                                                  do_handshake_on_connect=False)
+            self.sock.do_handshake()
+
+    return track(Connection(host, timeout=timeout, context=ssl_context()))
+
+
+def abort_network():
+    """Wake every thread blocked on a Google connection (shutdown() wakes a blocked recv;
+    close() from another thread doesn't)."""
+    with _connections_lock:
+        conns = list(_connections)
+    for conn in conns:
+        sock = getattr(conn, 'sock', None)
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+
+def https_post(url, fields, timeout=30):
+    """POST a form; returns (status, body bytes). Raises OSError when Google can't be
+    reached. The connection is tracked, so stopping the service interrupts it."""
+    import http.client
+    import urllib.parse
+    parts = urllib.parse.urlsplit(url)
+    conn = https_connection(parts.netloc, timeout)
+    try:
+        conn.request('POST', parts.path, urllib.parse.urlencode(fields),
+                     {'Content-Type': 'application/x-www-form-urlencoded'})
+        resp = conn.getresponse()
+        return resp.status, resp.read()
+    except http.client.HTTPException as e:
+        raise OSError(str(e))
+    finally:
+        conn.close()
+
+
 def log(msg, level=xbmc.LOGINFO):
+    if stopping.is_set() and threading.current_thread() is not threading.main_thread():
+        return      # see `stopping`: a background thread must not call into Kodi now
     xbmc.log('[%s] %s' % (ADDON_ID, msg), level)
 
 

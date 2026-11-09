@@ -69,9 +69,9 @@ class WebDAVServer(http.server.ThreadingHTTPServer):
         http.server.ThreadingHTTPServer.shutdown_request(self, request)
 
     def close_all(self):
-        """Stop serving and drop open connections (they'd otherwise sit in keep-alive)."""
+        """Stop serving and drop open connections (they'd otherwise sit in keep-alive, and
+        a handler blocked on one would keep its thread alive)."""
         self.shutdown()
-        self.server_close()
         with self.conns_lock:
             conns = list(self.conns)
         for sock in conns:
@@ -79,6 +79,7 @@ class WebDAVServer(http.server.ThreadingHTTPServer):
                 sock.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
+        self.server_close()
 
 
 def is_loopback(addr):
