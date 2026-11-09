@@ -367,6 +367,14 @@ def test_setup():
         'client_id': '123-abc.apps.googleusercontent.com', 'client_secret': 'GOCSPX-test'}})})
     check(common.get_setting('client_id') == '123-abc.apps.googleusercontent.com'
           and common.get_setting('client_secret') == 'GOCSPX-test', 'client saved from pasted JSON')
+    check(common.get_setting('relay_url') == '', 'Desktop (installed) client turns the relay off')
+    post('/client', {'client_json': json.dumps({'web': {
+        'client_id': '456-web.apps.googleusercontent.com', 'client_secret': 'GOCSPX-web',
+        'redirect_uris': ['https://gdrive-bridge.github.io/gdrive-bridge/callback.html']}})})
+    check(common.get_setting('relay_url') == 'https://gdrive-bridge.github.io/gdrive-bridge/callback.html',
+          'Web client JSON turns the relay on with its redirect URI')
+    post('/client', {'client_json': json.dumps({'installed': {
+        'client_id': '123-abc.apps.googleusercontent.com', 'client_secret': 'GOCSPX-test'}})})
     s, h, _ = request(port, 'POST', '/client', {'Cookie': cookie,
                                                 'Content-Type': 'application/x-www-form-urlencoded'},
                       'client_id=x&csrf=wrong')

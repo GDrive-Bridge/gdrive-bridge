@@ -1,4 +1,8 @@
 Unreleased
+- Sign-in without copy and paste: the setup guide now creates a Web application client that
+  returns to this project's static relay page, which hands the sign-in to your Kodi device.
+  Pasting the client's JSON file switches the relay on (Web client) or off (Desktop client)
+  automatically. Desktop clients still work with copy and paste.
 - Setup page: buttons no longer trigger Chrome's "The information you're about to submit is
   not secure" pop-up (forms are sent by the page's script). The address bar's "Not secure"
   label remains: the page is plain http on your home network.

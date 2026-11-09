@@ -41,9 +41,13 @@ GUIDE = [
      'ends a test user\'s sign-in after 7 days; just sign in here again, or see the optional '
      'last step.'),
     ('Create the client', 'https://console.cloud.google.com/auth/clients',
-     'Tap <b>Create client</b>, Application type <b>Desktop app</b>, name <i>Kodi</i>, '
-     '<b>Create</b>. Copy the <b>Client ID</b> and <b>Client secret</b> straight away (Google '
-     'shows the secret only once), or download the JSON file.'),
+     'Tap <b>Create client</b>, Application type <b>Web application</b>, name <i>Kodi</i>. '
+     'Under <b>Authorised redirect URIs</b> tap <b>Add URI</b> and enter '
+     '<code>https://gdrive-bridge.github.io/gdrive-bridge/callback.html</code>, then '
+     '<b>Create</b>. <b>Download the JSON file</b> straight away (Google shows the secret only '
+     'once). With this client, sign-in finishes by itself, with nothing to copy.<br>'
+     '<span class="hint">Alternatively choose <b>Desktop app</b> (no redirect URI): sign-in '
+     'then ends with copying an address back into this page.</span>'),
 ]
 
 # Not needed to use the add-on; only stops the 7-day sign-in limit for test users.
@@ -333,11 +337,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         cid = form.get('client_id', '').strip()
         secret = form.get('client_secret', '').strip()
         blob = form.get('client_json', '').strip()
+        relay = None                # None = leave the relay setting as it is
         if blob:
             try:
-                data = json.loads(blob)
-                data = data.get('installed') or data.get('web') or data
+                raw = json.loads(blob)
+                data = raw.get('installed') or raw.get('web') or raw
                 cid, secret = data['client_id'], data['client_secret']
+                if 'web' in raw:
+                    # a Web client returns to an https relay page: use its redirect URI
+                    uris = [u for u in data.get('redirect_uris', []) if u.startswith('https://')]
+                    relay = uris[0] if uris else None
+                elif 'installed' in raw:
+                    relay = ''      # Desktop client: copy-and-paste sign-in
             except (ValueError, KeyError, AttributeError):
                 self._redirect('/?e=1', msg='That doesn\'t look like the JSON file from Google.')
                 return
@@ -345,7 +356,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._redirect('/?e=1', msg='The client ID ends with .apps.googleusercontent.com, '
                                         'and the secret can\'t be empty.')
             return
-        self.server.bridge.set_settings({'client_id': cid, 'client_secret': secret})
+        values = {'client_id': cid, 'client_secret': secret}
+        if relay is not None:
+            values['relay_url'] = relay
+        self.server.bridge.set_settings(values)
         self._redirect('/', msg='Client saved. Now sign in with Google.')
 
     def _save_settings(self, form):
@@ -486,15 +500,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             '<p>GDrive Bridge signs in with your own Google Cloud client, so nothing goes through '
             'anyone else\'s server. This takes about 10 minutes, once. On a phone, turn on your '
             'browser\'s <i>Desktop site</i> option if the Cloud console is cramped.</p>'
-            '<ol>%s<li>Paste them below and tap <b>Save client</b>.</li></ol>%s'
+            '<ol>%s<li>Open the downloaded JSON file, copy all of it, paste it below and tap '
+            '<b>Save client</b>.</li></ol>%s'
             '<form method="post" action="/client">%s'
+            '<label for="cj">Downloaded JSON file</label>'
+            '<textarea id="cj" name="client_json" autocomplete="off" '
+            'placeholder=\'{"web":{"client_id":"...","client_secret":"..."}}\'></textarea>'
+            '<details><summary>Or type the client ID and secret</summary>'
             '<label for="cid">Client ID</label><input id="cid" name="client_id" type="text" '
             'autocomplete="off" value="%s" placeholder="....apps.googleusercontent.com">'
             '<label for="cs">Client secret</label><input id="cs" name="client_secret" '
             'type="password" autocomplete="off" placeholder="%s">'
-            '<details><summary>Or paste the downloaded JSON file</summary>'
-            '<textarea name="client_json" placeholder=\'{"installed":{"client_id":...}}\'>'
-            '</textarea></details><button>Save client</button></form></details>'
+            '<p class="hint">Typed in by hand, a Web application client also needs the relay '
+            'address in Settings.</p></details>'
+            '<button>Save client</button></form></details>'
             % (' open' if open_ else '',
                'Step 1: create your Google sign-in client' if open_ else 'Change the Google client',
                steps, optional, csrf, html.escape(s['client_id']),

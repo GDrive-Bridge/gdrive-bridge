@@ -27,9 +27,17 @@ Tested on Kodi 21 (Omega) on an NVIDIA Shield (Android TV). It needs Kodi 19 or 
 1. Open **Add-ons > GDrive Bridge > Set up on phone or computer**.
 2. Scan the QR code with your phone (or open the address shown and enter the PIN).
 3. Follow **Step 1** on the setup page to create your own Google Cloud client (about 10 minutes,
-   once). Paste the downloaded JSON file into the page.
-4. **Step 2: Sign in with Google.** Your phone ends on a page that "can't be reached"
-   (`127.0.0.1`); that's expected. Copy its address back into the setup page.
+   once): a **Web application** client with the redirect URI
+   `https://gdrive-bridge.github.io/gdrive-bridge/callback.html`. Paste the downloaded JSON
+   file into the page.
+4. **Step 2: Sign in with Google.** After you allow access, Google returns your phone to the
+   relay page above, which hands the sign-in straight to the setup page on your Kodi device
+   (your phone must be on the same network). Nothing to copy, and the relay is a static page:
+   it never sees your client secret or your sign-in, which are exchanged with Google by your
+   Kodi device itself.
+
+   With a **Desktop app** client instead, your phone ends on a page that "can't be reached"
+   (`127.0.0.1`); copy its address back into the setup page.
 5. In Kodi: **Videos > Files > Add videos > Browse > Add network location**: protocol
    **WebDAV server (HTTP)**, server **127.0.0.1**, port **8765**. Pick a folder, name it, and set
    the content type for folders that hold films or TV shows.
