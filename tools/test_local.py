@@ -469,7 +469,14 @@ def test_setup():
     except OSError:
         opened_early = False
     check(not opened_early, 'on-demand: the setup page is closed until Kodi opens it')
-    b.on_notification(common.ADDON_ID, 'Other.setup', json.dumps({'token': 'kodi-qr'}))
+    real_lan_address = common.lan_address
+    common.lan_address = lambda: '192.0.2.20'      # the device got a new address while running
+    try:
+        b.on_notification(common.ADDON_ID, 'Other.setup', json.dumps({'token': 'kodi-qr'}))
+    finally:
+        common.lan_address = real_lan_address
+    check(b.status()['setup_url'] == 'http://192.0.2.20:18766/',
+          'the QR code uses the current address, looked up when setup is opened')
     s, h, _ = request(18766, 'GET', '/?t=kodi-qr')
     check(s == 303 and 'gdb_session=' in h.get('Set-Cookie', ''),
           'opening it from Kodi starts the page, and its QR link works')

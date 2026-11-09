@@ -212,6 +212,11 @@ class Bridge(object):
         except ValueError:
             payload = {}
         if command == 'setup':
+            # the address can change while Kodi runs (a new DHCP lease); check it for each QR code
+            address = common.lan_address()
+            if address != self.address:
+                common.log('home-network address is now %s (was %s)' % (address, self.address))
+                self.address = address
             with self.lock:
                 self.setup_requested = time.time()
                 if self._start_setup() and payload.get('token'):

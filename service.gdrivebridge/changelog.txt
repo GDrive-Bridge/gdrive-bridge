@@ -1,3 +1,10 @@
+v0.3.1 (2026-11-09)
+- The setup QR code and address use the device's current home-network address, looked up each
+  time you choose "Set up on phone or computer". Before, an address change while Kodi was
+  running (a new DHCP lease) left the old address in the QR code until Kodi restarted.
+- New: the GDrive Bridge repository. Install it once and Kodi keeps GDrive Bridge up to date
+  (see the README for the steps).
+
 v0.3.0 (2026-11-09)
 - The setup page now opens only when you choose "Set up on phone or computer" in Kodi, and
   closes after 15 minutes idle. Safer default for a page on your home network. Upgrading
