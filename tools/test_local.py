@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(ROOT, 'tools', 'fakekodi'))
 import xbmc  # noqa: E402
 xbmc.VERBOSE = False
 import xbmcaddon  # noqa: E402
-from resources.lib import auth, cache, common, webdav  # noqa: E402
+from resources.lib import accounts, auth, cache, common, webdav  # noqa: E402
 from resources.lib.drive import DriveError, FOLDER_MIME, SHORTCUT_MIME  # noqa: E402
 
 FAILS = []
@@ -57,7 +57,8 @@ class FakeResp(object):
 
 
 class FakeDrive(object):
-    def __init__(self):
+    def __init__(self, email='tester@example.com'):
+        self.email = email
         self.files = {}
         self.changes_q = []
         self.token = 1
@@ -84,6 +85,9 @@ class FakeDrive(object):
         add('doc', 'Notes', ['movies'], 'application/vnd.google-apps.document')
         add('dotdir', '.git', ['ROOT'], FOLDER_MIME)
         add('zipf', 'Backup.ZIP', ['ROOT'], 'application/zip', content=b'PK')
+        add('heic', 'IMG_0001.HEIC', ['movies'], 'image/heic', content=b'heic-original')
+        add('deep', 'Extras', ['movies'], FOLDER_MIME)
+        self.files['m1']['starred'] = True
         add('sc_folder', 'Shortcut to TV', ['ROOT'], SHORTCUT_MIME,
             shortcutDetails={'targetId': 'tv', 'targetMimeType': FOLDER_MIME})
         add('sc_file', 'Alien link.mkv', ['ROOT'], SHORTCUT_MIME,
@@ -115,7 +119,20 @@ class FakeDrive(object):
         return [{'id': 'sd1', 'name': 'Family'}]
 
     def about(self):
-        return {'emailAddress': 'tester@example.com', 'displayName': 'Tester'}
+        return {'emailAddress': self.email, 'displayName': self.email.split('@')[0].title()}
+
+    def starred(self):
+        self.calls.append(('starred',))
+        return [self._pub(f) for f in self.files.values() if f.get('starred')]
+
+    def search(self, term, limit=500):
+        self.calls.append(('search', term))
+        return [self._pub(f) for f in self.files.values()
+                if term.lower() in f['name'].lower() and f['id'] != 'ROOT'][:limit]
+
+    def thumbnail(self, fid, size=3840):
+        self.calls.append(('thumbnail', fid))
+        return b'\xff\xd8\xff\xe0' + b'J' * 2000 + b'\xff\xd9', 'image/jpeg'
 
     def start_page_token(self):
         return str(self.token)
@@ -196,7 +213,7 @@ def test_webdav():
     print('\n== WebDAV ==')
     fd, creds = FakeDrive(), FakeCreds()
     tree = cache.DriveTree(fd, creds)
-    srv = webdav.WebDAVServer(('127.0.0.1', 0), tree, fd)
+    srv = webdav.WebDAVServer(('127.0.0.1', 0), accounts.Router(tree, fd))
     port = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = 'dav://127.0.0.1:%d/' % port
@@ -211,7 +228,7 @@ def test_webdav():
 
     st, root = propfind(port, '/')
     names = [l for l, *_ in kodi_items(base, base, root)]
-    check(st == 207 and names == ['My Drive', 'Shared with me', 'Shared drives'],
+    check(st == 207 and names == ['My Drive', 'Shared with me', 'Shared drives', 'Starred'],
           'root lists the three top folders, self entry skipped: %s' % names)
 
     st, md = propfind(port, '/My%20Drive/')
@@ -240,6 +257,8 @@ def test_webdav():
     check('Amélie – 2001 日本.mkv' in labels, 'unicode name round-trips')
     # Kodi then opens items by the paths it built
     for label, path, is_dir, size in items:
+        if is_dir or label.endswith('.HEIC.jpg'):
+            continue        # listed with the HEIC's size; the JPEG's size is known on download
         p = path[len(base) - 1:]
         s, h, _ = request(port, 'HEAD', p)
         check(s == 200 and int(h['Content-Length']) == size, 'HEAD %s -> %s' % (label, s))
@@ -282,6 +301,39 @@ def test_webdav():
     st, sd = propfind(port, '/Shared%20drives/Family/')
     check(any(e[0].endswith('Home%20video.mp4') for e in sd), 'shared drive contents')
     check(('children', 'sd1', 'sd1') in fd.calls, 'shared drive listed with its driveId')
+    # Starred, Search and HEIC photos
+    st, sr = propfind(port, '/Starred/')
+    check(st == 207 and [e[0].rsplit('/', 1)[-1] for e in sr[1:]] == ['Alien%20%281979%29.mkv'],
+          'Starred lists starred files')
+    check('Search' not in names, 'Search is not listed at the top (kept out of library scans)')
+    st, se = propfind(port, '/Search/alien/')
+    found = sorted(urllib.parse.unquote(e[0].rsplit('/', 1)[-1]) for e in se[1:])
+    check(st == 207 and found == ['Alien (1979).mkv', 'Alien (1979).srt', 'Alien link.mkv'],
+          'Search lists matching files: %s' % found)
+    n_search = sum(1 for c in fd.calls if c[0] == 'search')
+    import time as _t; _t.sleep(0.3)        # let the search's read-ahead settle
+    for probe in ('VIDEO_TS.IFO', 'index.bdmv', '.nomedia'):
+        request(port, 'PROPFIND', '/Search/alien/' + probe, {'Depth': '0'})
+    check(sum(1 for c in fd.calls if c[0] == 'search') == n_search,
+          "Kodi's probes inside a search folder don't re-run the search")
+    s, h, body = request(port, 'GET', '/Search/alien/Alien%20%281979%29.mkv', {'Range': 'bytes=0-9'})
+    check(s == 206 and body == (bytes(range(256)) * 40)[:10], 'search results play')
+    st, mv0 = propfind(port, '/My%20Drive/Movies/')
+    labels0 = [urllib.parse.unquote(e[0].rsplit('/', 1)[-1]) for e in mv0[1:]]
+    check('IMG_0001.HEIC.jpg' in labels0, 'HEIC photo is listed as .jpg')
+    s, h, body = request(port, 'GET', '/My%20Drive/Movies/IMG_0001.HEIC.jpg')
+    check(s == 200 and body[:3] == b'\xff\xd8\xff' and h.get('Content-Type') == 'image/jpeg',
+          'HEIC photo is served as a JPEG')
+    s, h, part = request(port, 'GET', '/My%20Drive/Movies/IMG_0001.HEIC.jpg', {'Range': 'bytes=4-9'})
+    check(s == 206 and part == body[4:10], 'converted photo supports ranges')
+    n_thumb = sum(1 for c in fd.calls if c[0] == 'thumbnail')
+    request(port, 'HEAD', '/My%20Drive/Movies/IMG_0001.HEIC.jpg')
+    check(sum(1 for c in fd.calls if c[0] == 'thumbnail') == n_thumb, 'converted photos are cached')
+    tree.configure(True, True, heic_as_jpeg=False)
+    st, mv1 = propfind(port, '/My%20Drive/Movies/')
+    check(any(e[0].endswith('IMG_0001.HEIC') for e in mv1), 'HEIC shown as-is when the setting is off')
+    tree.configure(True, True)
+
     st, via = propfind(port, '/My%20Drive/Shortcut%20to%20TV/')
     check(any(e[0].endswith('Show%20S01E01.mkv') for e in via), 'folder shortcut is browsable')
 
@@ -301,6 +353,12 @@ def test_webdav():
     check('New.mkv' in labels and 'Amelie.mkv' in labels and 'Clip (2).mp4' not in labels
           and 'Clip.mp4' in labels, 'changes applied without re-listing: %s' % labels)
     check(len(fd.calls) == n_calls, 'no extra Drive calls after the change feed')
+    propfind(port, '/Starred/')
+    fd.files['tv']['starred'] = True
+    fd.changes_q = [{'fileId': 'tv', 'file': fd._pub(fd.files['tv'])}]
+    tree.sync()
+    st, sr2 = propfind(port, '/Starred/')
+    check(any(e[0].endswith('/TV/') for e in sr2), 'starring a folder adds it to Starred via the change feed')
     propfind(port, '/Shared%20with%20me/TV/')          # cache the destination first
     fd.files['m1srt']['parents'] = ['tv']
     fd.changes_q = [{'fileId': 'm1srt', 'file': fd._pub(fd.files['m1srt'])}]
@@ -326,6 +384,57 @@ def test_webdav():
     srv.close_all()
 
 
+def test_read_ahead():
+    print('\n== Read-ahead ==')
+    import time as _t
+    fd, creds = FakeDrive(), FakeCreds()
+    tree = cache.DriveTree(fd, creds, path=os.path.join(TMP, 'ra.json'))
+    tree.ensure_root()
+    tree.children('ROOT')               # Kodi opens My Drive
+    tree.read_ahead_folder('ROOT')
+    deadline = _t.time() + 3
+    while _t.time() < deadline and not (('children', 'movies', None) in fd.calls and
+                                        ('children', 'tv', None) in fd.calls):
+        _t.sleep(0.05)
+    check(('children', 'movies', None) in fd.calls and ('children', 'tv', None) in fd.calls,
+          'subfolders (and folder shortcuts) are read ahead in the background')
+    check('.git' not in [c[1] for c in fd.calls if c[0] == 'children'], 'dot folders are not read ahead')
+    _t.sleep(0.5)
+    check(('children', 'deep', None) not in fd.calls, 'read-ahead stops after one level')
+    n = len(fd.calls)
+    tree.children('movies')             # Kodi opens Movies: answered from the cache
+    tree.read_ahead_folder('movies')
+    check(('children', 'movies', None) not in fd.calls[n:], 'a read-ahead folder opens without asking Drive')
+    deadline = _t.time() + 3
+    while _t.time() < deadline and ('children', 'deep', None) not in fd.calls:
+        _t.sleep(0.05)
+    check(('children', 'deep', None) in fd.calls, 'opening a folder reads ahead its own subfolders')
+
+    # stale copies are served at once and refreshed in the background
+    tree.listings['movies']['t'] = 0
+    n = len(fd.calls)
+    ids = tree.listing('movies')
+    check(ids and fd.calls[n:].count(('children', 'movies', None)) == 0,
+          'a stale folder answers from its copy without waiting on Drive')
+    deadline = _t.time() + 3
+    while _t.time() < deadline and ('children', 'movies', None) not in fd.calls[n:]:
+        _t.sleep(0.05)
+    check(('children', 'movies', None) in fd.calls[n:] and tree._fresh('movies'),
+          '...and is refreshed in the background')
+    # search results survive a change as a stale copy
+    tree.listing(cache.SEARCH + 'alien')
+    tree._apply([{'fileId': 'm1srt', 'file': fd._pub(fd.files['m1srt'])}])
+    n = len(fd.calls)
+    ids = tree.listing(cache.SEARCH + 'alien')
+    check(ids and ('search', 'alien') not in fd.calls[n:],
+          'after a Drive change, a search folder answers from its old copy')
+    deadline = _t.time() + 3
+    while _t.time() < deadline and ('search', 'alien') not in fd.calls[n:]:
+        _t.sleep(0.05)
+    check(('search', 'alien') in fd.calls[n:], '...and the search is re-run in the background')
+
+
+
 # ---------------------------------------------------------------- setup page tests
 def test_setup():
     print('\n== Setup page ==')
@@ -334,9 +443,9 @@ def test_setup():
     a = xbmcaddon.Addon(common.ADDON_ID)
     a.setSettingInt('webdav_port', 18765)
     a.setSettingInt('setup_port', 18766)
-    b = bridge_mod.Bridge()
-    b.drive = FakeDrive()
-    b.tree = cache.DriveTree(b.drive, b.creds)
+    emails = iter(['tester@example.com', 'second@example.com', 'second@example.com',
+                   'third@example.com'])
+    b = bridge_mod.Bridge(drive_factory=lambda creds: FakeDrive(next(emails)))
     b.start()
     port = 18766
     pin = common.get_setting('setup_pin')
@@ -412,6 +521,49 @@ def test_setup():
 
     st = common.read_json(common.status_path())
     check(st['signed_in'] and st['email'] == 'tester@example.com', 'status published for Kodi')
+
+    # ---- several accounts ----
+    def add_account(code='thecode'):
+        s, h, _ = request(port, 'GET', '/google?add=1', {'Cookie': cookie})
+        qa = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(h['Location']).query))
+        post('/code', {'pasted': 'http://127.0.0.1:18765/callback?state=%s&code=%s'
+                                 % (qa['state'], code)})
+        return qa
+    qa = add_account()
+    check(qa['prompt'] == 'select_account consent', 'adding an account asks Google which account')
+    st = common.read_json(common.status_path())
+    check(len(st['accounts']) == 2 and st['accounts'][1]['email'] == 'second@example.com'
+          and st['accounts'][1]['folder'] == 'Second', 'second account added as folder "Second"')
+    st, root = propfind(18765, '/')
+    rnames = [urllib.parse.unquote(e[0].strip('/')) for e in root[1:]]
+    check(rnames == ['My Drive', 'Shared with me', 'Shared drives', 'Starred', 'Second'],
+          'root shows the main account plus the extra account: %s' % rnames)
+    st, sec = propfind(18765, '/Second/My%20Drive/Movies/')
+    check(st == 207 and any(e[0].endswith('Alien%20%281979%29.mkv') for e in sec),
+          "extra account's own Drive is browsable under its folder")
+    st, mine = propfind(18765, '/My%20Drive/Movies/')
+    check(st == 207 and all(not e[0].startswith('/Second') for e in mine),
+          'main account paths are unchanged')
+    s, h, body = request(18765, 'GET', '/Second/My%20Drive/Movies/Alien%20%281979%29.mkv',
+                         {'Range': 'bytes=0-3'})
+    check(s == 206 and body == bytes(range(4)), "extra account's files play")
+    add_account()                       # the factory's next identity is second@ again
+    st = common.read_json(common.status_path())
+    check(len(st['accounts']) == 2, 'adding the same Google account again renews it, no copy')
+    s, h, _ = post('/account', {'account': st['accounts'][1]['id'], 'label': 'Starred'})
+    check('e=1' in h.get('Location', ''), 'reserved folder names are refused')
+    post('/account', {'account': st['accounts'][1]['id'], 'label': 'Kids'})
+    st, kids = propfind(18765, '/Kids/My%20Drive/')
+    check(st == 207, 'renamed account folder works')
+    extra = common.read_json(common.status_path())['accounts'][1]
+    extra_token = os.path.join(common.profile_dir(), 'token-%s.json' % extra['id'])
+    check(os.path.exists(extra_token), 'extra account has its own token file')
+    post('/signout', {'account': extra['id']})
+    st = common.read_json(common.status_path())
+    check(len(st['accounts']) == 1 and st['signed_in'] and not os.path.exists(extra_token),
+          'removing an extra account deletes its files and keeps the main one')
+    s, _, _ = request(18765, 'PROPFIND', '/Kids/', {'Depth': '0'})
+    check(s == 404, 'removed account folder is gone')
     src = open(os.path.join(ADDON, 'resources', 'lib', 'bridge.py')).read() + \
         ''.join(open(os.path.join(ADDON, 'resources', 'lib', f)).read()
                 for f in ('webdav.py', 'cache.py', 'drive.py', 'auth.py', 'setup.py'))
@@ -482,7 +634,7 @@ def test_setup():
     b.main_actions.clear()
     b.creds.error = 'Google no longer accepts this sign-in.'
     b._check_expiry(); b._check_expiry()
-    check(sum('Sign-in expired' in a for a in b.main_actions) == 1,
+    check(sum('expired' in a and 'tester@example.com' in a for a in b.main_actions) == 1,
           'expired sign-in raises one Kodi notification')
     b.creds.error = None
     b._check_expiry()
@@ -507,6 +659,7 @@ def test_setup():
 
 try:
     test_webdav()
+    test_read_ahead()
     test_setup()
 finally:
     shutil.rmtree(TMP, ignore_errors=True)

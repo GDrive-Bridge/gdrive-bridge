@@ -2,16 +2,20 @@
 import gzip
 import http.client
 import json
+import re
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 
 from . import common
 from .auth import AuthError
 
 HOST = 'www.googleapis.com'
 BASE = '/drive/v3'
-FILE_FIELDS = ('id,name,mimeType,size,modifiedTime,createdTime,parents,driveId,trashed,sharedWithMeTime,'
+FILE_FIELDS = ('id,name,mimeType,size,modifiedTime,createdTime,parents,driveId,trashed,'
+               'sharedWithMeTime,starred,'
                'shortcutDetails(targetId,targetMimeType)')
 FOLDER_MIME = 'application/vnd.google-apps.folder'
 SHORTCUT_MIME = 'application/vnd.google-apps.shortcut'
@@ -115,15 +119,15 @@ class Drive(object):
             raise DriveError(resp.status, reason, message)
         raise DriveError(0, 'retries', 'gave up')
 
-    def _list(self, path, key, params):
+    def _list(self, path, key, params, limit=None):
         params = dict(params)
         out = []
         while True:
             res = self.call(path, params)
             out.extend(res.get(key, []))
             token = res.get('nextPageToken')
-            if not token:
-                return out
+            if not token or (limit and len(out) >= limit):
+                return out[:limit] if limit else out
             params['pageToken'] = token
 
     def about(self):
@@ -153,6 +157,58 @@ class Drive(object):
             'supportsAllDrives': 'true',
             'includeItemsFromAllDrives': 'true',
         })
+
+    def starred(self):
+        return self._list('/files', 'files', {
+            'q': 'starred = true and trashed = false',
+            'fields': 'nextPageToken,files(%s)' % FILE_FIELDS,
+            'pageSize': 1000,
+            'corpora': 'allDrives',
+            'supportsAllDrives': 'true',
+            'includeItemsFromAllDrives': 'true',
+        })
+
+    def search(self, term, limit=500):
+        """Files and folders whose name contains `term` (case-insensitive, Drive-wide)."""
+        quoted = term.replace('\\', '\\\\').replace("'", "\\'")
+        return self._list('/files', 'files', {
+            'q': "name contains '%s' and trashed = false" % quoted,
+            'fields': 'nextPageToken,files(%s)' % FILE_FIELDS,
+            'pageSize': 200,
+            'corpora': 'allDrives',
+            'supportsAllDrives': 'true',
+            'includeItemsFromAllDrives': 'true',
+        }, limit=limit)
+
+    def thumbnail(self, file_id, size=3840):
+        """Google's JPEG rendering of an image (used for formats Kodi can't show, e.g. HEIC).
+
+        Returns (bytes, content type). The thumbnail link is short-lived, so it is fetched
+        fresh each time; the bytes are cached by the caller."""
+        meta = self.call('/files/' + urllib.parse.quote(file_id, safe=''),
+                         {'fields': 'thumbnailLink', 'supportsAllDrives': 'true'})
+        link = meta.get('thumbnailLink')
+        if not link:
+            raise DriveError(404, 'noThumbnail', 'Google has no preview for this file yet')
+        # '=s<N>' caps the longest side (never enlarges); '-rj' forces JPEG output
+        link = re.sub(r'=s\d+[^/]*$', '', link) + '=s%d-rj' % size
+        force = False
+        for attempt in range(2):
+            token = self.creds.access_token(force=force)
+            req = urllib.request.Request(link, headers={'Authorization': 'Bearer ' + token,
+                                                        'User-Agent': USER_AGENT})
+            try:
+                with urllib.request.urlopen(req, timeout=30,
+                                            context=common.ssl_context()) as resp:
+                    return resp.read(), resp.headers.get('Content-Type', 'image/jpeg')
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403) and attempt == 0:
+                    force = True
+                    continue
+                raise DriveError(e.code, 'thumbnail', str(e))
+            except (OSError, http.client.HTTPException) as e:
+                raise DriveError(0, 'network', str(e))
+        raise DriveError(0, 'retries', 'gave up')
 
     def shared_drives(self):
         return self._list('/drives', 'drives', {

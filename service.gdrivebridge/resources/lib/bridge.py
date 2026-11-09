@@ -7,8 +7,9 @@ import time
 import xbmc
 
 from . import common
-from .auth import AuthError, Credentials, NotSignedIn, SignIn
-from .cache import DriveTree, NotReady
+from .accounts import MAIN, Accounts
+from .auth import AuthError, NotSignedIn, SignIn
+from .cache import NotReady
 from .drive import Drive, DriveError
 from .setup import SetupServer
 from .webdav import WebDAVServer
@@ -17,10 +18,8 @@ SETUP_IDLE = 15 * 60
 
 
 class Bridge(object):
-    def __init__(self):
-        self.creds = Credentials()
-        self.drive = Drive(self.creds)
-        self.tree = DriveTree(self.drive, self.creds)
+    def __init__(self, drive_factory=Drive):
+        self.accounts = Accounts(drive_factory)
         self.signin = SignIn()
         common.profile_dir()          # resolve paths here, on the service thread
         common.addon_path()
@@ -37,8 +36,25 @@ class Bridge(object):
         self.sync_thread = None
         self._published = None
         self.main_actions = []          # Kodi calls to make from the service's main thread
-        self.expiry_notified = False
         self.address = common.lan_address()
+
+    # the main account (the only one before multiple accounts existed)
+    @property
+    def creds(self):
+        return self.accounts.main.creds
+
+    @property
+    def drive(self):
+        return self.accounts.main.drive
+
+    @property
+    def tree(self):
+        return self.accounts.main.tree
+
+    def _configure(self, account):
+        s = self.settings
+        account.tree.configure(s['show_shared'], s['show_drives'], s['hide_dot'],
+                               s['hide_archives'], s['show_starred'], s['heic_as_jpeg'])
 
     # ---- lifecycle ------------------------------------------------------
     def start(self):
@@ -46,9 +62,9 @@ class Bridge(object):
         self.settings = common.get_settings()
         self.applied = dict(self.settings)
         common.set_debug(self.settings['debug'])
-        self.tree.configure(self.settings['show_shared'], self.settings['show_drives'],
-                            self.settings['hide_dot'], self.settings['hide_archives'])
-        self.tree.load()
+        for account in self.accounts.all():
+            self._configure(account)
+            account.tree.load()
         self._start_webdav()
         if self.settings['setup_mode'] == common.SETUP_ALWAYS:
             self._start_setup()
@@ -62,8 +78,9 @@ class Bridge(object):
         self.wake.set()
         self._stop_setup()
         self._stop_webdav()
-        self.tree.save(force=True)
-        self.drive.pool.clear()
+        for account in self.accounts.all():
+            account.tree.save(force=True)
+            account.drive.pool.clear()
         try:
             os.remove(common.status_path())
         except OSError:
@@ -91,7 +108,7 @@ class Bridge(object):
         lan = s['lan_share'] and bool(s['lan_password'])
         host = '0.0.0.0' if lan else '127.0.0.1'
         try:
-            self.webdav = WebDAVServer((host, s['webdav_port']), self.tree, self.drive,
+            self.webdav = WebDAVServer((host, s['webdav_port']), self.accounts,
                                        (s['lan_user'], s['lan_password']) if lan else None,
                                        on_callback=self._tv_callback)
         except OSError as e:
@@ -168,9 +185,10 @@ class Bridge(object):
                     self._start_setup()
                 else:
                     self.setup_requested = time.time()   # closes once idle
-            if changed & {'show_shared', 'show_drives', 'hide_dot', 'hide_archives'}:
-                self.tree.configure(new['show_shared'], new['show_drives'], new['hide_dot'],
-                                    new['hide_archives'])
+            if changed & {'show_shared', 'show_drives', 'hide_dot', 'hide_archives',
+                          'show_starred', 'heic_as_jpeg'}:
+                for account in self.accounts.all():
+                    self._configure(account)
             if 'lan_address' in changed:
                 self.address = common.lan_address()
             if 'poll_interval' in changed:
@@ -201,25 +219,43 @@ class Bridge(object):
         elif command == 'refresh':
             self.request_refresh()
         elif command == 'signout':
-            self.sign_out()
+            self.sign_out(payload.get('account', MAIN))
 
     # ---- account --------------------------------------------------------
     def finish_signin(self, pasted):
+        """Complete a sign-in for the account it was started for. Returns the email."""
         s = self.settings
         if not (s['client_id'] and s['client_secret']):
             raise AuthError('Enter the client ID and secret first.')
-        response = self.signin.finish(pasted, s['client_id'], s['client_secret'])
-        previous = self.creds.email
-        self.creds.save(response, s['client_id'], s['client_secret'])
+        response, target = self.signin.finish(pasted, s['client_id'], s['client_secret'])
+        # adding an account before the main one is signed in just fills the main slot
+        new = target == 'new' and self.accounts.main.creds.signed_in
+        account = self.accounts.create() if new else (self.accounts.get(target)
+                                                      or self.accounts.main)
+        previous = account.creds.email
+        account.creds.save(response, s['client_id'], s['client_secret'])
         try:
-            user = self.drive.about()
+            user = account.drive.about()
             email, name = user.get('emailAddress', ''), user.get('displayName', '')
         except (DriveError, AuthError) as e:
             common.log('signed in, but reading the account failed: %s' % e)
             email = name = ''
-        self.creds.set_identity(email, name)
-        if not previous or previous != email:
-            self.tree.clear()
+        account.creds.set_identity(email, name)
+        if new:
+            existing = self.accounts.find_email(email, exclude=account.id)
+            if existing is not None:
+                # the same Google account again: renew that one instead of adding a copy
+                existing.creds.save(response, s['client_id'], s['client_secret'])
+                existing.creds.set_identity(email, name)
+                self.accounts.remove(account)
+                account = existing
+            else:
+                account.label = name or email
+                self._configure(account)
+                self.accounts.save()
+        elif previous and previous != email:
+            account.tree.clear()
+        account.expiry_notified = False
         common.log('signed in as %s' % email)
         self.wake.set()
         self.publish()
@@ -240,44 +276,65 @@ class Bridge(object):
         return os.path.join(common.addon_path(), 'resources', 'icon.png')
 
     def _check_expiry(self):
-        """Tell the user (once) when Google stops accepting the sign-in."""
-        if self.creds.signed_in and self.creds.error and not self.expiry_notified:
-            self.expiry_notified = True
-            self.main_actions.append(
-                'Notification(GDrive Bridge,Sign-in expired. Open GDrive Bridge and choose '
-                'Sign in on this TV.,15000,%s)' % self._icon())
-        elif not self.creds.error:
-            self.expiry_notified = False
+        """Tell the user (once per account) when Google stops accepting a sign-in."""
+        for account in self.accounts.all():
+            creds = account.creds
+            if creds.signed_in and creds.error and not account.expiry_notified:
+                account.expiry_notified = True
+                self.main_actions.append(
+                    'Notification(GDrive Bridge,Sign-in for %s expired. Open GDrive Bridge to '
+                    'sign in again.,15000,%s)' % ((creds.email or 'Google').replace(',', ' '),
+                                                 self._icon()))
+            elif not creds.error:
+                account.expiry_notified = False
 
-    def sign_out(self):
-        self.creds.sign_out()
-        self.tree.clear()
-        common.log('signed out')
+    def sign_out(self, aid=MAIN):
+        """Revoke and forget an account. Extra accounts are removed altogether."""
+        account = self.accounts.get(aid)
+        if account is None:
+            return
+        account.creds.sign_out()
+        account.tree.clear()
+        if account.id != MAIN:
+            self.accounts.remove(account)
+        common.log('signed out %s' % aid)
         self.publish()
 
+    def rename_account(self, aid, label):
+        account = self.accounts.get(aid)
+        if account is not None:
+            account.label = label.strip()
+            self.accounts.save()
+            self.publish()
+
     def request_refresh(self):
-        self.tree.clear()
+        for account in self.accounts.all():
+            account.tree.clear()
         self.wake.set()
         self.publish()
 
     # ---- background sync ------------------------------------------------
     def _sync_loop(self):
         while not self.stopping.is_set():
-            if self.creds.signed_in:
+            for account in self.accounts.all():
+                if not account.creds.signed_in:
+                    continue
+                tree = account.tree
                 try:
-                    count = self.tree.sync()
-                    self.tree.last_error = ''
+                    count = tree.sync()
+                    tree.warm()             # top folders cached before Kodi asks
+                    tree.last_error = ''
                     if count:
-                        common.debug('applied %d Drive changes' % count)
+                        common.debug('%s: applied %d Drive changes' % (account.id, count))
                 except (NotReady, NotSignedIn):
                     pass
                 except (DriveError, AuthError) as e:
-                    self.tree.last_error = str(e)
-                    common.log('sync failed: %s' % e)
+                    tree.last_error = str(e)
+                    common.log('sync failed (%s): %s' % (account.id, e))
                 except Exception as e:      # never let the loop die
-                    self.tree.last_error = 'internal error: %s' % e
-                    common.log('sync crashed: %r' % e, xbmc.LOGERROR)
-                self.tree.save()
+                    tree.last_error = 'internal error: %s' % e
+                    common.log('sync crashed (%s): %r' % (account.id, e), xbmc.LOGERROR)
+                tree.save()
             self._check_expiry()
             self.publish()
             self.wake.wait(max(15, self.settings['poll_interval']))
@@ -304,7 +361,19 @@ class Bridge(object):
             'setup_error': self.setup_error,
             'pin': s['setup_pin'],
             'has_client': bool(s['client_id'] and s['client_secret']),
+            'accounts': [self._account_status(a) for a in self.accounts.all()],
         }
+
+    def _account_status(self, account):
+        stats = account.tree.stats()
+        folder = None
+        for name, a in self.accounts.folders().items():
+            if a is account:
+                folder = name
+        return {'id': account.id, 'email': account.creds.email, 'label': account.label,
+                'folder': folder, 'signed_in': account.creds.signed_in,
+                'auth_error': account.creds.error or '', 'items': stats['items'],
+                'error': stats['error'] or ''}
 
     def publish(self):
         # A file, not a Kodi window property: Window.setProperty waits for Kodi's GUI

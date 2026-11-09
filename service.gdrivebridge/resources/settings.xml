@@ -52,6 +52,16 @@
           <default>true</default>
           <control type="toggle"/>
         </setting>
+        <setting id="show_starred" type="boolean" label="30054" help="30055">
+          <level>0</level>
+          <default>true</default>
+          <control type="toggle"/>
+        </setting>
+        <setting id="heic_as_jpeg" type="boolean" label="30056" help="30057">
+          <level>0</level>
+          <default>true</default>
+          <control type="toggle"/>
+        </setting>
         <setting id="hide_archives" type="boolean" label="30052" help="30053">
           <level>0</level>
           <default>true</default>

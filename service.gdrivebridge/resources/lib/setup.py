@@ -15,6 +15,7 @@ import urllib.parse
 
 from . import common
 from .auth import AuthError
+from .cache import RESERVED
 
 SESSION_DAYS = 30
 LINK_TTL = 15 * 60
@@ -128,6 +129,7 @@ ol{padding-left:22px}li{margin:6px 0}code{word-break:break-all}
 dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:8px 0}dt{color:var(--muted)}
 dd{margin:0;word-break:break-all}details{margin:8px 0}summary{cursor:pointer;font-weight:600}
 .hint{color:var(--muted);font-size:14px}
+.acct{border-top:1px solid var(--line);padding-top:8px;margin-top:8px}
 """
 
 
@@ -277,10 +279,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not cid:
                 self._redirect('/', msg='Enter the client ID and secret first.')
                 return
-            relay = self.server.bridge.settings['relay_url'].strip()
-            target = '%s:%d' % (self.server.bridge.address, self.server.server_address[1])
-            self._redirect(self.server.bridge.signin.start(
-                cid, relay, target, self.server.bridge.settings['webdav_port']))
+            bridge = self.server.bridge
+            relay = bridge.settings['relay_url'].strip()
+            return_to = '%s:%d' % (bridge.address, self.server.server_address[1])
+            if query.get('add'):
+                account, choose = 'new', True
+            else:
+                account = query.get('account', 'main')
+                account = account if bridge.accounts.get(account) else 'main'
+                choose = account != 'main'
+            self._redirect(bridge.signin.start(cid, relay, return_to,
+                                               bridge.settings['webdav_port'], account, choose))
             return
         if url.path == '/status.json':
             self._send(200, json.dumps(self.server.bridge.status()), ctype='application/json')
@@ -323,8 +332,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except AuthError as e:
                 self._redirect('/?e=1', msg=str(e))
         elif path == '/signout':
-            bridge.sign_out()
-            self._redirect('/', msg='Signed out. The sign-in was also revoked with Google.')
+            aid = form.get('account', 'main')
+            bridge.sign_out(aid)
+            self._redirect('/', msg='Signed out. The sign-in was also revoked with Google.'
+                           if aid == 'main' else 'Account removed, and its sign-in revoked.')
+        elif path == '/account':
+            label = ' '.join(form.get('label', '').split())
+            if not label or label in RESERVED:
+                self._redirect('/?e=1', msg='Choose a folder name other than: %s.'
+                               % ', '.join(RESERVED))
+                return
+            bridge.rename_account(form.get('account', ''), label[:60])
+            self._redirect('/', msg='Folder name saved.')
         elif path == '/refresh':
             bridge.request_refresh()
             self._redirect('/', msg='Drive folders will be re-read now.')
@@ -388,8 +407,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         errors = []
         cur = self.server.bridge.settings
         values = {}
-        for key in ('show_shared', 'show_drives', 'hide_dot', 'hide_archives', 'lan_share',
-                    'debug'):
+        for key in ('show_shared', 'show_drives', 'show_starred', 'hide_dot', 'hide_archives',
+                    'heic_as_jpeg', 'lan_share', 'debug'):
             values[key] = form.get(key) == 'on'
         for key, lo, hi in (('poll_interval', 15, 3600), ('webdav_port', 1024, 65535),
                             ('setup_port', 1024, 65535)):
@@ -483,6 +502,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             acct.append(self._guide(csrf, s, open_=False))
         acct.append('</section>')
         out.append(''.join(acct))
+        if st['signed_in'] and has_client:
+            out.append(self._accounts_section(csrf, st))
         # use in Kodi
         out.append(
             '<section><h2>Add it to Kodi</h2><ol>'
@@ -545,22 +566,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
                steps, csrf, optional, html.escape(s['client_id']),
                'saved (enter to replace)' if s['client_secret'] else ''))
 
-    def _signin_steps(self, csrf):
+    def _signin_steps(self, csrf, href='/google', title='Step 2: sign in', uid='p'):
         if self.server.bridge.settings['relay_url']:
             return (
-                '<h2>Step 2: sign in</h2><ol>'
-                '<li>Tap <a class="button" href="/google">Sign in with Google</a></li>'
+                '<h2>%s</h2><ol>'
+                '<li>Tap <a class="button" href="%s">Sign in with Google</a></li>'
                 '<li>Choose your account. Google says it <i>hasn\'t verified this app</i>; it\'s '
                 'your own, so tap <b>Advanced</b>, then <b>Go to GDrive Bridge</b>.</li>'
                 '<li>Allow <b>See and download all your Google Drive files</b> and tap '
                 '<b>Continue</b>. You come back here, signed in.</li></ol>'
                 '<details><summary>If it stops on a page that can\'t be reached</summary>'
-                '<form method="post" action="/code">%s<label for="pasted">Paste its address'
-                '</label><textarea id="pasted" name="pasted" autocomplete="off"></textarea>'
-                '<button>Finish sign-in</button></form></details>' % csrf)
+                '<form method="post" action="/code">%s<label for="%s">Paste its address'
+                '</label><textarea id="%s" name="pasted" autocomplete="off"></textarea>'
+                '<button>Finish sign-in</button></form></details>'
+                % (title, html.escape(href), csrf, uid, uid))
         return (
-            '<h2>Step 2: sign in</h2><ol>'
-            '<li>Tap <a class="button" href="/google" target="_blank" rel="noopener">Sign in with '
+            '<h2>%s</h2><ol>'
+            '<li>Tap <a class="button" href="%s" target="_blank" rel="noopener">Sign in with '
             'Google</a> (it opens a new tab).</li>'
             '<li>Choose your account. Google says it <i>hasn\'t verified this app</i>; it\'s your '
             'own, so tap <b>Continue</b> (or <b>Advanced</b>, then <b>Go to GDrive Bridge</b>). '
@@ -571,10 +593,41 @@ class Handler(http.server.BaseHTTPRequestHandler):
             '<li>The tab ends on a page that <b>can\'t be reached</b> (127.0.0.1). That\'s '
             'expected. Copy the whole address from its address bar.</li>'
             '<li>Come back to this tab and paste it here:</li></ol>'
-            '<form method="post" action="/code">%s<label for="pasted">Address from the failed '
-            'page</label><textarea id="pasted" name="pasted" autocomplete="off" '
+            '<form method="post" action="/code">%s<label for="%s">Address from the failed '
+            'page</label><textarea id="%s" name="pasted" autocomplete="off" '
             'placeholder="http://127.0.0.1:8765/callback?state=...&amp;code=..."></textarea>'
-            '<button>Finish sign-in</button></form>' % csrf)
+            '<button>Finish sign-in</button></form>' % (title, html.escape(href), csrf, uid, uid))
+
+    def _accounts_section(self, csrf, st):
+        """Extra Google accounts: each is one more top-level folder in Kodi."""
+        rows = []
+        for a in st['accounts'][1:]:
+            state = ('<span class="pill err">Sign-in problem</span>' if a['auth_error']
+                     else '<span class="pill ok">Signed in</span>')
+            rows.append(
+                '<div class="acct"><p><b>%s</b> %s<br><span class="hint">Kodi folder: '
+                '<code>%s</code></span></p>%s'
+                '<form method="post" action="/account">%s<input type="hidden" name="account" '
+                'value="%s"><label for="l-%s">Folder name</label><input id="l-%s" name="label" '
+                'type="text" value="%s"><button class="secondary">Rename</button></form>'
+                '<form method="post" action="/signout">%s<input type="hidden" name="account" '
+                'value="%s"><button class="danger">Remove this account</button></form>%s</div>'
+                % (html.escape(a['email'] or 'unknown'), state,
+                   html.escape('/' + (a['folder'] or '') + '/'),
+                   '<p>%s</p>' % html.escape(a['auth_error']) if a['auth_error'] else '',
+                   csrf, a['id'], a['id'], a['id'], html.escape(a['label'] or a['email']),
+                   csrf, a['id'],
+                   '<details><summary>Sign in again</summary>%s</details>'
+                   % self._signin_steps(csrf, '/google?account=' + a['id'], 'Sign in again',
+                                        'p-' + a['id']) if a['auth_error'] else ''))
+        return (
+            '<section id="accounts"><h2>More Google accounts</h2>'
+            '<p class="hint">Each extra account appears in Kodi as one more folder next to '
+            '<i>My Drive</i>, with its own My Drive, Shared with me, Shared drives and Starred. '
+            'While your Google app is in Testing, add each account as a test user first.</p>'
+            '%s<details><summary>Add another Google account</summary>%s</details></section>'
+            % (''.join(rows) or '<p>None yet.</p>',
+               self._signin_steps(csrf, '/google?add=1', 'Add an account', 'p-add')))
 
     @staticmethod
     def _lan_note(st, s):
@@ -597,7 +650,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         return (
             '<section id="settings"><h2>Settings</h2><form method="post" action="/settings">%s'
-            '%s%s%s%s%s'
+            '%s%s%s%s%s%s%s'
             '<h2 style="margin-top:20px">Sharing</h2>%s'
             '<label for="lan_user">LAN user name</label><input id="lan_user" name="lan_user" '
             'type="text" value="%s"><label for="lan_password">LAN password</label>'
@@ -622,6 +675,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             % (csrf,
                check('show_shared', 'Show <i>Shared with me</i>'),
                check('show_drives', 'Show <i>Shared drives</i>'),
+               check('show_starred', 'Show <i>Starred</i>',
+                     'Starred items also appear in their own folders, so don\'t give the '
+                     'top-level folder a content type: the library would list them twice.'),
+               check('heic_as_jpeg', 'Show iPhone HEIC photos as JPEG',
+                     'Kodi can\'t display HEIC; Google\'s JPEG version is shown instead.'),
                check('hide_dot', 'Hide files and folders starting with a dot',
                      'Hides things like <i>.git</i> or <i>.ipynb_checkpoints</i> that '
                      'aren\'t media.'),

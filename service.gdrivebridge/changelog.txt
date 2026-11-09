@@ -1,3 +1,20 @@
+v0.2.0 (2026-11-09)
+- Several Google accounts: each extra account is one more top-level folder (named after the
+  account; rename or remove it on the setup page). Your existing paths don't change.
+- Starred: a top-level folder of your starred files and folders.
+- Search: "Search Google Drive" in the add-on's menu opens the matching files and folders as a
+  folder you can browse and play.
+- Pictures: "Add Google Drive to Pictures" helper. iPhone HEIC photos, which Kodi can't
+  display, are listed as .jpg and served as Google's JPEG rendering (setting: "Show iPhone
+  HEIC photos as JPEG").
+- Read-ahead: subfolders of whatever Kodi opens are listed in the background, older copies
+  are served at once and refreshed behind the scenes, and searches run before their window
+  opens. Only a folder that has never been listed makes Kodi wait on Google. (On Kodi 21 we
+  saw all of Kodi's Python add-ons freeze for up to 20 seconds while Kodi's screen waited on
+  a slow folder.)
+- .nfo files, artwork and subtitles next to your videos are read by Kodi's library as from
+  any network share (no change needed; noted in the README).
+
 v0.1.2 (2026-11-09)
 - Setup page: stays logged in when opened from a link in another app (the login cookie
   was SameSite=Strict, which browsers don't send in that case).

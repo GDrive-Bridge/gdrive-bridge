@@ -79,7 +79,8 @@ class SignIn(object):
         except OSError as e:
             common.log('could not save pending sign-in: %s' % e)
 
-    def start(self, client_id, relay_url='', return_to='', loopback_port=8765):
+    def start(self, client_id, relay_url='', return_to='', loopback_port=8765, target='main',
+              choose_account=False):
         """Google sign-in URL. With a relay, Google redirects to the relay page, which
         forwards the phone to `return_to` (this device's setup page, host:port); the
         target rides in `state` after a '.' (token_urlsafe never contains one)."""
@@ -94,8 +95,9 @@ class SignIn(object):
             now = time.time()
             self._merge_disk()
             self.pending = {k: v for k, v in self.pending.items() if now - v['t'] < PENDING_TTL}
+            # target: the account this sign-in is for ('main', an account id, or 'new')
             self.pending[state] = {'verifier': verifier, 't': now, 'client_id': client_id,
-                                   'redirect_uri': redirect_uri}
+                                   'redirect_uri': redirect_uri, 'target': target}
             self._save()
         return AUTH_URL + '?' + urllib.parse.urlencode({
             'client_id': client_id,
@@ -106,11 +108,15 @@ class SignIn(object):
             'code_challenge_method': 'S256',
             'state': state,
             'access_type': 'offline',
-            'prompt': 'consent',
+            # when adding an account, make Google ask which one (the phone is usually
+            # already signed in to the main account)
+            'prompt': 'select_account consent' if choose_account else 'consent',
         })
 
     def finish(self, pasted, client_id, client_secret):
-        """Exchange the pasted redirect address (or bare code). Returns the token response."""
+        """Exchange the pasted redirect address (or bare code).
+
+        Returns (token response, target) where target says which account it's for."""
         code, state, error = parse_pasted(pasted)
         if error:
             if error == 'access_denied':
@@ -149,7 +155,7 @@ class SignIn(object):
         with self.lock:
             self.pending.pop(state, None)
             self._save()
-        return body
+        return body, entry.get('target', 'main')
 
 
 def parse_pasted(text):
@@ -177,7 +183,8 @@ def _describe(body, status):
 class Credentials(object):
     """Holds the refresh token and hands out access tokens, refreshing them when due."""
 
-    def __init__(self):
+    def __init__(self, path=None):
+        self.path = path or token_path()
         self.lock = threading.Lock()
         self.token = None
         self.error = None
@@ -187,7 +194,7 @@ class Credentials(object):
 
     def reload(self):
         with self.lock:
-            self.token = common.read_json(token_path())
+            self.token = common.read_json(self.path)
             if self.token and not self.token.get('refresh_token'):
                 self.token = None
             self._access = None
@@ -211,7 +218,7 @@ class Credentials(object):
             'name': name,
             'saved': int(time.time()),
         }
-        common.write_json(token_path(), data, private=True)
+        common.write_json(self.path, data, private=True)
         with self.lock:
             self.token = data
             self.error = None
@@ -224,7 +231,7 @@ class Credentials(object):
                 return
             self.token['email'] = email
             self.token['name'] = name
-            common.write_json(token_path(), self.token, private=True)
+            common.write_json(self.path, self.token, private=True)
 
     def access_token(self, force=False):
         with self.lock:
@@ -263,6 +270,6 @@ class Credentials(object):
             except Exception as e:  # offline: still forget locally
                 common.log('revoke failed: %s' % e)
         try:
-            os.remove(token_path())
+            os.remove(self.path)
         except OSError:
             pass

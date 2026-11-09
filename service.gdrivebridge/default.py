@@ -6,6 +6,9 @@ import secrets
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import xbmc
 import xbmcgui
@@ -148,7 +151,65 @@ def show_status(st):
     ]
     if st['error']:
         lines.append('[B]Last error:[/B] %s' % st['error'])
+    for a in st.get('accounts', [])[1:]:
+        lines.append('[B]Also:[/B] %s, in folder /%s/%s' % (
+            a['email'] or 'unknown', a['folder'] or '?',
+            ' - sign-in problem: ' + a['auth_error'] if a['auth_error'] else ''))
     xbmcgui.Dialog().textviewer('%s status' % TITLE, '[CR]'.join(lines))
+
+
+def search(st):
+    """Ask for a term and open Drive's matching files and folders as a Kodi folder."""
+    accounts = [a for a in st.get('accounts', []) if a['signed_in']]
+    prefix = ''
+    if len(accounts) > 1:
+        labels = ['%s (%s)' % (a['email'], 'main' if a['id'] == 'main' else a['folder'])
+                  for a in accounts]
+        choice = xbmcgui.Dialog().select('Search which account?', labels)
+        if choice < 0:
+            return
+        if accounts[choice]['id'] != 'main':
+            prefix = urllib.parse.quote(accounts[choice]['folder'], safe='') + '/'
+    term = xbmcgui.Dialog().input('Search Google Drive (file or folder name)').strip()
+    if not term:
+        return
+    rel = '%sSearch/%s/' % (prefix, urllib.parse.quote(term, safe=''))
+    # Run the search here first, so the window opens from the add-on's cache: Kodi's
+    # screen must not wait on Google (see cache.py, read-ahead).
+    busy = xbmcgui.DialogProgressBG()
+    busy.create(TITLE, 'Searching Google Drive for "%s"...' % term)
+    try:
+        port = st['webdav'].rstrip('/').rsplit(':', 1)[1]
+        req = urllib.request.Request('http://127.0.0.1:%s/%s' % (port, rel), method='PROPFIND',
+                                     headers={'Depth': '1'})
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            found = resp.read().count(b'<D:response>') - 1
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        busy.close()
+        xbmcgui.Dialog().ok(TITLE, 'The search didn\'t work: %s' % e)
+        return
+    busy.close()
+    if found <= 0:
+        xbmcgui.Dialog().ok(TITLE, 'Nothing in Google Drive is named like "%s".' % term)
+        return
+    xbmc.executebuiltin('ActivateWindow(Videos,"%s%s",return)' % (st['webdav'], rel))
+
+
+def add_pictures_help(st):
+    xbmcgui.Dialog().textviewer('Add Google Drive to Pictures', '[CR]'.join([
+        '1. Go to [B]Pictures[/B] and choose [B]Add pictures...[/B]',
+        '2. Choose [B]Browse[/B], then [B]Add network location...[/B]',
+        '   Protocol: [B]WebDAV server (HTTP)[/B], Server address: [B]127.0.0.1[/B], '
+        'Port: [B]%s[/B]. Leave the rest empty and choose OK.' % st['webdav'].rsplit(':', 1)[1]
+        .strip('/'),
+        '   (Or type [B]%s[/B] as the path.)' % st['webdav'],
+        '3. Open it, pick a photo folder, choose OK and name it.',
+        '',
+        'Browse it and press [B]Play[/B] on a folder for a slideshow. iPhone HEIC photos are',
+        'shown using Google\'s JPEG version (setting: Show iPhone HEIC photos as JPEG).',
+    ]))
+    if xbmcgui.Dialog().yesno(TITLE, 'Open the Pictures sources now?'):
+        xbmc.executebuiltin('ActivateWindow(Pictures,sources://pictures/,return)')
 
 
 def add_source_help(st):
@@ -189,7 +250,9 @@ def menu():
                ('Status', lambda: show_status(service_status() or st)),
                ('Refresh Drive folders', lambda: (notify('refresh'), xbmcgui.Dialog().notification(
                    TITLE, 'Re-reading Drive folders'))),
-               ('Add Google Drive to Videos', lambda: add_source_help(st))]
+               ('Search Google Drive', lambda: search(service_status() or st)),
+               ('Add Google Drive to Videos', lambda: add_source_help(st)),
+               ('Add Google Drive to Pictures', lambda: add_pictures_help(st))]
     if st['signed_in']:
         entries.append(('Sign out', lambda: sign_out(st)))
     entries.append(('Settings', lambda: common.addon().openSettings()))
@@ -209,6 +272,10 @@ def main():
             sign_out(st)
     elif arg == 'refresh':
         notify('refresh')
+    elif arg == 'search':
+        st = service_status()
+        if st:
+            search(st)
     elif arg == 'stopscan':
         # UpdateLibrary(video) cancels a running video scan instead of starting one
         if xbmc.getCondVisibility('Library.IsScanningVideo'):

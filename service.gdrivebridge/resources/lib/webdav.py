@@ -5,7 +5,9 @@ Until the bridge is signed in and Drive answers, requests get 503, never an empt
 folder, so a library update can't mistake a not-ready server for an empty source.
 """
 import base64
+import collections
 import email.utils
+import re
 import hmac
 import html
 import http.client
@@ -21,6 +23,7 @@ from .cache import NotFound, NotReady
 from .drive import DriveError
 
 CHUNK = 512 * 1024
+CONVERTED_CACHE = 16       # converted photos kept in memory (slideshows revisit them)
 
 
 def quote(segment):
@@ -31,11 +34,12 @@ class WebDAVServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, tree, drive, credentials=None, on_callback=None):
+    def __init__(self, address, router, credentials=None, on_callback=None):
         self.on_callback = on_callback      # finishes a sign-in made in this device's browser
-        self.tree = tree
-        self.drive = drive
+        self.router = router                # accounts.Accounts (or accounts.Router for one tree)
         self.credentials = credentials      # (user, password) for LAN clients, or None
+        self.converted = collections.OrderedDict()   # (acct, file id) -> JPEG bytes, LRU
+        self.converted_lock = threading.Lock()
         self.conns = set()
         self.conns_lock = threading.Lock()
         http.server.ThreadingHTTPServer.__init__(self, address, Handler)
@@ -44,6 +48,20 @@ class WebDAVServer(http.server.ThreadingHTTPServer):
         with self.conns_lock:
             self.conns.add(request)
         http.server.ThreadingHTTPServer.process_request(self, request, client_address)
+
+    def converted_bytes(self, entry):
+        """Google's JPEG rendering of an image Kodi can't decode (e.g. HEIC), cached."""
+        key = (entry.get('acct'), entry['id'])
+        with self.converted_lock:
+            if key in self.converted:
+                self.converted.move_to_end(key)
+                return self.converted[key]
+        data, _ = self.router.drive(entry).thumbnail(entry['id'])
+        with self.converted_lock:
+            self.converted[key] = data
+            while len(self.converted) > CONVERTED_CACHE:
+                self.converted.popitem(last=False)
+        return data
 
     def shutdown_request(self, request):
         with self.conns_lock:
@@ -127,7 +145,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _lookup(self, segments):
         try:
-            return self.server.tree.resolve(segments)
+            return self.server.router.resolve(segments)
         except NotFound:
             self._send(404, 'Not found\n')
         except (NotReady, NotSignedIn) as e:
@@ -138,7 +156,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _children(self, entry):
         try:
-            return self.server.tree.children(entry['id'])[0]
+            return self.server.router.children(entry)
         except (NotReady, NotSignedIn, DriveError, AuthError) as e:
             self._unavailable(str(e) or 'not signed in')
             return None
@@ -169,6 +187,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             children = self._children(entry)
             if children is None:
                 return
+            self.server.router.read_ahead(entry)
             prefix = base if base.endswith('/') else base + '/'
             for child in children:
                 href = prefix + quote(child['name']) + ('/' if child['dir'] else '')
@@ -221,6 +240,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._send(200, self._index(segments, children), ctype='text/html; charset=utf-8')
             return
         last_modified = email.utils.formatdate(entry['mtime'], usegmt=True) if entry['mtime'] else None
+        if entry.get('convert'):
+            self._send_converted(entry, last_modified, head)
+            return
         if head:
             self.send_response(200)
             self.send_header('Content-Type', entry['mime'] or 'application/octet-stream')
@@ -246,12 +268,47 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 % (colour, 'Signed in' if ok else 'Sign-in failed', html.escape(message)))
         self._send(200, body, ctype='text/html; charset=utf-8')
 
+    def _send_converted(self, entry, last_modified, head):
+        try:
+            data = self.server.converted_bytes(entry)
+        except (AuthError, NotSignedIn) as e:
+            self._unavailable(str(e) or 'not signed in')
+            return
+        except DriveError as e:
+            common.log('preview of %s failed: %s' % (entry['name'], e))
+            self._send(404 if e.status == 404 else 502, 'No preview from Drive: %s\n' % e)
+            return
+        status, start, end = 200, 0, len(data) - 1
+        m = re.match(r'bytes=(\d*)-(\d*)$', (self.headers.get('Range') or '').strip())
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                start = int(m.group(1))
+                end = min(int(m.group(2)), end) if m.group(2) else end
+            else:
+                start = max(0, len(data) - int(m.group(2)))
+            if start > end:
+                self._send(416, '', headers={'Content-Range': 'bytes */%d' % len(data)})
+                return
+            status = 206
+        self.send_response(status)
+        self.send_header('Content-Type', 'image/jpeg')
+        self.send_header('Content-Length', str(end - start + 1))
+        self.send_header('Accept-Ranges', 'bytes')
+        if status == 206:
+            self.send_header('Content-Range', 'bytes %d-%d/%d' % (start, end, len(data)))
+        if last_modified:
+            self.send_header('Last-Modified', last_modified)
+        self.end_headers()
+        if not head:
+            self.wfile.write(data[start:end + 1])
+
     def _stream(self, entry, last_modified):
         rng = self.headers.get('Range')
         if rng and (',' in rng or not rng.strip().lower().startswith('bytes=')):
             rng = None                       # multi-range: send the whole file instead
+        drive = self.server.router.drive(entry)
         try:
-            resp, conn = self.server.drive.open_media(entry['id'], rng)
+            resp, conn = drive.open_media(entry['id'], rng)
         except (AuthError, NotSignedIn) as e:
             self._unavailable(str(e) or 'not signed in')
             return
@@ -285,7 +342,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             common.debug('stream %s ended early: %s' % (entry['name'], e))
             self.close_connection = True
         finally:
-            self.server.drive.release(resp, conn, complete)
+            drive.release(resp, conn, complete)
 
     def _index(self, segments, children):
         title = '/' + '/'.join(segments)

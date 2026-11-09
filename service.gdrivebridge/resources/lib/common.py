@@ -25,6 +25,8 @@ SETTINGS = {
     'show_drives': ('bool', True),
     'hide_dot': ('bool', True),
     'hide_archives': ('bool', True),
+    'show_starred': ('bool', True),
+    'heic_as_jpeg': ('bool', True),
     'poll_interval': ('int', 60),
     'webdav_port': ('int', 8765),
     'lan_share': ('bool', False),

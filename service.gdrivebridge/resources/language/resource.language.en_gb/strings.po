@@ -148,3 +148,19 @@ msgstr ""
 msgctxt "#30053"
 msgid "Kodi opens archives like folders, reading them over the internet, which makes folders slow to open."
 msgstr ""
+
+msgctxt "#30054"
+msgid "Show \"Starred\""
+msgstr ""
+
+msgctxt "#30055"
+msgid "Starred items also appear in their own folders: don't give the top-level folder a content type, or the library lists them twice."
+msgstr ""
+
+msgctxt "#30056"
+msgid "Show iPhone HEIC photos as JPEG"
+msgstr ""
+
+msgctxt "#30057"
+msgid "Kodi can't display HEIC photos; Google's JPEG version is shown instead."
+msgstr ""

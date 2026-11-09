@@ -4,6 +4,7 @@ Top level:  My Drive/   Shared with me/   Shared drives/
 Names are made path-safe and duplicates in one folder get " (2)", " (3)"... in
 creation order, so a given path keeps pointing at the same file.
 """
+import collections
 import os
 import threading
 import time
@@ -12,13 +13,21 @@ from . import common
 from .auth import AuthError, NotSignedIn
 from .drive import DriveError, FOLDER_MIME, SHORTCUT_MIME, GOOGLE_APPS
 
-TOP, SHARED, DRIVES = '~top', '~shared', '~drives'
+TOP, SHARED, DRIVES, STARRED = '~top', '~shared', '~drives', '~starred'
+SEARCH_ROOT, SEARCH = '~searchroot', '~search:'   # '~search:<term>' listings
+SEARCH_TTL = 10 * 60
+# Top-level names an extra account's folder can never take
+RESERVED = ('My Drive', 'Shared with me', 'Shared drives', 'Starred', 'Search')
+# Image formats Kodi can't decode; served as Google's JPEG rendering instead
+CONVERT_EXTS = ('.heic', '.heif')
+CONVERT_MIMES = ('image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence')
 LISTING_TTL = 12 * 3600   # safety net only; the change feed keeps listings current
 CACHE_VERSION = 1
 # Kodi browses these as folders (zip://, rar://, apk is a zip), reading them over the
 # network with many ranged requests while its GUI waits; hidden by default.
 ARCHIVE_EXTS = ('.zip', '.rar', '.7z', '.tar', '.gz', '.tgz', '.bz2', '.xz', '.apk',
                 '.cbz', '.cbr', '.jar', '.xpi')
+PREFETCH_PER_FOLDER = 40   # subfolders read ahead after a folder is listed
 MAX_DEPTH = 48            # stops runaway recursion through folder shortcut loops
 
 
@@ -42,6 +51,7 @@ def _node(f):
         'p': f.get('parents') or [],
         'd': f.get('driveId'),
         'w': bool(f.get('sharedWithMeTime')),
+        'r': bool(f.get('starred')),
         'x': [shortcut['targetId'], shortcut.get('targetMimeType', '')]
         if shortcut.get('targetId') else None,
     }
@@ -64,18 +74,27 @@ def numbered(name, n, is_dir):
 
 
 class DriveTree(object):
-    def __init__(self, drive, creds):
+    def __init__(self, drive, creds, path=None):
         self.drive = drive
         self.creds = creds
         self.lock = threading.RLock()
         self.fetch_locks = {}
-        self.path = os.path.join(common.profile_dir(), 'cache.json')
+        self.path = path or os.path.join(common.profile_dir(), 'cache.json')
         self.show_shared = True
         self.show_drives = True
+        self.show_starred = True
+        self.heic_as_jpeg = True
         self.hide_dot = True
         self.hide_archives = True
         self.last_sync = 0
         self.last_error = ''
+        # Read-ahead: Kodi's GUI thread must not wait on Google. While it waits on us,
+        # another add-on can block holding Python's GIL (Kodi's info calls don't release
+        # it), and we can't answer until Kodi's 20 s timeout. Answers from the cache are
+        # instant, so folders are fetched in the background before Kodi asks for them.
+        self.prefetch_queue = collections.deque()
+        self.prefetch_wake = threading.Event()
+        self.prefetch_thread = None
         self._reset()
 
     def _reset(self):
@@ -86,14 +105,18 @@ class DriveTree(object):
         self.page_token = None
         self.dirty = True
 
-    def configure(self, show_shared, show_drives, hide_dot=True, hide_archives=True):
+    def configure(self, show_shared, show_drives, hide_dot=True, hide_archives=True,
+                  show_starred=True, heic_as_jpeg=True):
         with self.lock:
             self.show_shared = show_shared
             self.show_drives = show_drives
-            if hide_dot != self.hide_dot or hide_archives != self.hide_archives:
+            self.show_starred = show_starred
+            if (hide_dot != self.hide_dot or hide_archives != self.hide_archives
+                    or heic_as_jpeg != self.heic_as_jpeg):
                 self.entries.clear()
             self.hide_dot = hide_dot
             self.hide_archives = hide_archives
+            self.heic_as_jpeg = heic_as_jpeg
             self.entries.pop(TOP, None)
 
     # ---- persistence ----------------------------------------------------
@@ -126,7 +149,8 @@ class DriveTree(object):
                 'synced': self.last_sync,
                 'nodes': dict(self.nodes),
                 'listings': {k: {'t': v['t'], 'ids': list(v['ids'])}
-                             for k, v in self.listings.items()},
+                             for k, v in self.listings.items()
+                             if not k.startswith(SEARCH)},
             }
             self.dirty = False
         try:
@@ -162,6 +186,12 @@ class DriveTree(object):
     def _fetch(self, key):
         if key == SHARED:
             return self.drive.shared_with_me()
+        if key == STARRED:
+            return self.drive.starred()
+        if key == SEARCH_ROOT:
+            return []
+        if key.startswith(SEARCH):
+            return self.drive.search(key[len(SEARCH):])
         if key == DRIVES:
             return [{'id': d['id'], 'name': d['name'], 'mimeType': FOLDER_MIME,
                      'driveId': d['id'], 'createdTime': d.get('createdTime')}
@@ -178,12 +208,39 @@ class DriveTree(object):
 
     def _fresh(self, key):
         listing = self.listings.get(key)
-        return listing is not None and time.time() - listing['t'] < LISTING_TTL
+        ttl = SEARCH_TTL if key.startswith(SEARCH) else LISTING_TTL
+        return listing is not None and time.time() - listing['t'] < ttl
 
     def listing(self, key):
+        """A folder's child ids. A stale copy is returned at once and refreshed in the
+        background (Kodi's screen may be waiting on this answer); only a folder that has
+        never been listed is fetched while the caller waits."""
         with self.lock:
-            if self._fresh(key):
-                return self.listings[key]['ids']
+            listing = self.listings.get(key)
+            if listing is not None:
+                if not self._fresh(key):
+                    self._queue_refresh(key)
+                return listing['ids']
+        return self._refresh(key)
+
+    def _queue_refresh(self, key):
+        # caller holds self.lock
+        if key not in self.prefetch_queue:
+            self.prefetch_queue.appendleft(key)
+        self._ensure_prefetcher()
+        self.prefetch_wake.set()
+
+    def _ensure_prefetcher(self):
+        # caller holds self.lock
+        if self.prefetch_thread is None or not self.prefetch_thread.is_alive():
+            self.prefetch_thread = threading.Thread(target=self._prefetch_loop,
+                                                    name='gdb-prefetch')
+            self.prefetch_thread.daemon = True
+            self.prefetch_thread.start()
+
+    def _refresh(self, key):
+        """Fetch a listing from Drive now (one fetch per folder at a time)."""
+        with self.lock:
             flock = self.fetch_locks.setdefault(key, threading.Lock())
         with flock:
             with self.lock:
@@ -206,7 +263,79 @@ class DriveTree(object):
                 self.listings[key] = {'t': time.time(), 'ids': ids}
                 self.entries.pop(key, None)
                 self.dirty = True
-                return ids
+            return ids
+
+    # ---- read-ahead -----------------------------------------------------
+    def read_ahead_folder(self, key):
+        """Kodi just opened folder `key`: list its subfolders in the background (one
+        level only, so this never crawls the whole Drive)."""
+        with self.lock:
+            listing = self.listings.get(key)
+            ids = list(listing['ids']) if listing else []
+        if ids:
+            self.read_ahead(ids)
+
+    def read_ahead(self, ids):
+        """Queue the subfolders (and folder shortcuts) among `ids` for background listing."""
+        queued = 0
+        with self.lock:
+            for cid in ids:
+                n = self.nodes.get(cid)
+                if n is None or n['n'].startswith('.'):
+                    continue
+                if n['m'] == FOLDER_MIME:
+                    key = cid
+                elif n['m'] == SHORTCUT_MIME and n['x'] and n['x'][1] == FOLDER_MIME:
+                    key = n['x'][0]
+                else:
+                    continue
+                if not self._fresh(key) and key not in self.prefetch_queue:
+                    self.prefetch_queue.append(key)
+                    queued += 1
+                    if queued >= PREFETCH_PER_FOLDER:
+                        break
+            if queued:
+                self._ensure_prefetcher()
+        if queued:
+            self.prefetch_wake.set()
+
+    def warm(self):
+        """Fetch the top-level folders ahead of Kodi (after sign-in / startup)."""
+        try:
+            self.ensure_root()
+        except (NotReady, NotSignedIn, DriveError, AuthError):
+            return
+        keys = [self.root_id] + [k for k, on in ((SHARED, self.show_shared),
+                                                  (DRIVES, self.show_drives),
+                                                  (STARRED, self.show_starred)) if on]
+        with self.lock:
+            for key in keys:
+                if not self._fresh(key) and key not in self.prefetch_queue:
+                    self.prefetch_queue.appendleft(key)
+            self._ensure_prefetcher()
+        self.prefetch_wake.set()
+
+    def _prefetch_loop(self):
+        idle_since = time.time()
+        while True:
+            with self.lock:
+                key = self.prefetch_queue.popleft() if self.prefetch_queue else None
+            if key is None:
+                if time.time() - idle_since > 60:
+                    return                  # idle a minute: the next read_ahead restarts it
+                self.prefetch_wake.wait(5)
+                self.prefetch_wake.clear()
+                continue
+            idle_since = time.time()
+            if not self.creds.signed_in:
+                continue
+            with self.lock:
+                if self._fresh(key):
+                    continue
+            try:
+                self._refresh(key)
+            except Exception as e:           # a failed read-ahead is never fatal
+                common.debug('read-ahead of %s failed: %s' % (key, e))
 
     def _target(self, target_id):
         with self.lock:
@@ -234,6 +363,11 @@ class DriveTree(object):
         if self.show_drives:
             items.append({'name': 'Shared drives', 'id': DRIVES, 'dir': True, 'size': None,
                           'mtime': 0, 'mime': FOLDER_MIME})
+        if self.show_starred:
+            items.append({'name': 'Starred', 'id': STARRED, 'dir': True, 'size': None,
+                          'mtime': 0, 'mime': FOLDER_MIME})
+        # 'Search' is deliberately not listed: a scanned root source would otherwise pull
+        # search results into the library (and a clean would later drop them).
         return items
 
     def children(self, key):
@@ -287,6 +421,10 @@ class DriveTree(object):
             return entry
         if mime.startswith(GOOGLE_APPS):     # Docs, Sheets...: nothing to download
             return None
+        if self.heic_as_jpeg and (mime in CONVERT_MIMES
+                                  or entry['name'].lower().endswith(CONVERT_EXTS)):
+            # Kodi can't decode HEIC: list it as a JPEG and serve Google's rendering
+            entry.update(name=entry['name'] + '.jpg', mime='image/jpeg', convert=True)
         return entry
 
     @staticmethod
@@ -318,6 +456,12 @@ class DriveTree(object):
             raise NotFound()
         entry = {'name': '', 'id': TOP, 'dir': True, 'size': None, 'mtime': 0,
                  'mime': FOLDER_MIME}
+        if segments and segments[0] == 'Search':
+            # /Search/<term>/... : opened from the add-on's menu, never listed at the top
+            term = segments[1].strip() if len(segments) > 1 else ''
+            entry = {'name': 'Search', 'id': SEARCH + term if term else SEARCH_ROOT,
+                     'dir': True, 'size': None, 'mtime': 0, 'mime': FOLDER_MIME}
+            segments = segments[2:]
         for seg in segments:
             if not entry['dir']:
                 raise NotFound()
@@ -395,12 +539,19 @@ class DriveTree(object):
                     self.nodes.pop(fid, None)
                     self.listings.pop(fid, None)
                     self._unlink(SHARED, fid)
+                    self._unlink(STARRED, fid)
                 else:
                     self.nodes[fid] = new
-                    if new['w']:
-                        self._link(SHARED, fid)
-                    else:
-                        self._unlink(SHARED, fid)
+                    for flag, key in (('w', SHARED), ('r', STARRED)):
+                        if new.get(flag):
+                            self._link(key, fid)
+                        else:
+                            self._unlink(key, fid)
+            # search results are a snapshot: mark them stale, so the next look serves the
+            # old copy at once and refreshes it in the background
+            for key, listing in self.listings.items():
+                if key.startswith(SEARCH):
+                    listing['t'] = 0
             self.entries.clear()
             self.dirty = True
 
