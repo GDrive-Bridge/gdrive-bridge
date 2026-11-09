@@ -524,11 +524,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'browser\'s <i>Desktop site</i> option if the Cloud console is cramped.</p>'
             '<ol>%s<li>Tap <b>Choose the downloaded JSON file</b> below and pick it (on an '
             'iPhone it\'s in Files, under Downloads or your browser\'s folder). Or open it, copy '
-            'all of it and paste it into the box, then tap <b>Save client</b>.</li></ol>%s'
+            'all of it and paste it into the box, then tap <b>Save client</b>.</li></ol>'
             '<form method="post" action="/client" id="clientform">%s'
             '<label class="button secondary" for="cfile" id="cfilelabel">Choose the downloaded '
             'JSON file</label><input id="cfile" type="file" accept=".json,application/json,'
-            'text/plain" hidden>'
+            'text/plain" hidden>%s'
             '<label for="cj">Or paste the JSON file\'s contents</label>'
             '<textarea id="cj" name="client_json" autocomplete="off" '
             'placeholder=\'{"web":{"client_id":"...","client_secret":"..."}}\'></textarea>'
@@ -542,7 +542,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             '<button>Save client</button></form></details>'
             % (' open' if open_ else '',
                'Step 1: create your Google sign-in client' if open_ else 'Change the Google client',
-               steps, optional, csrf, html.escape(s['client_id']),
+               steps, csrf, optional, html.escape(s['client_id']),
                'saved (enter to replace)' if s['client_secret'] else ''))
 
     def _signin_steps(self, csrf):
