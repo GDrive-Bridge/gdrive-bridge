@@ -1,0 +1,150 @@
+# Kodi Media Center language file
+# Addon id: service.gdrivebridge
+msgid ""
+msgstr ""
+"Project-Id-Version: service.gdrivebridge\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: en_GB\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgctxt "#30010"
+msgid "Google account"
+msgstr ""
+
+msgctxt "#30011"
+msgid "Client ID"
+msgstr ""
+
+msgctxt "#30012"
+msgid "From the Desktop app client in your Google Cloud project. Easier: use \"Set up on phone or computer\" and paste it there."
+msgstr ""
+
+msgctxt "#30013"
+msgid "Client secret"
+msgstr ""
+
+msgctxt "#30014"
+msgid "Set up on phone or computer"
+msgstr ""
+
+msgctxt "#30015"
+msgid "Shows a QR code and PIN for the setup page, where you can enter the client, sign in with Google and change every setting."
+msgstr ""
+
+msgctxt "#30016"
+msgid "Sign out"
+msgstr ""
+
+msgctxt "#30020"
+msgid "Drive"
+msgstr ""
+
+msgctxt "#30021"
+msgid "Show \"Shared with me\""
+msgstr ""
+
+msgctxt "#30022"
+msgid "Show \"Shared drives\""
+msgstr ""
+
+msgctxt "#30023"
+msgid "Check Drive for changes every (seconds)"
+msgstr ""
+
+msgctxt "#30030"
+msgid "Network"
+msgstr ""
+
+msgctxt "#30031"
+msgid "WebDAV port"
+msgstr ""
+
+msgctxt "#30032"
+msgid "Share Drive with other devices on my network"
+msgstr ""
+
+msgctxt "#30033"
+msgid "LAN user name"
+msgstr ""
+
+msgctxt "#30034"
+msgid "LAN password"
+msgstr ""
+
+msgctxt "#30035"
+msgid "Setup page available"
+msgstr ""
+
+msgctxt "#30036"
+msgid "Always (PIN or QR link needed)"
+msgstr ""
+
+msgctxt "#30037"
+msgid "Only after opening it from Kodi"
+msgstr ""
+
+msgctxt "#30038"
+msgid "Setup page port"
+msgstr ""
+
+msgctxt "#30039"
+msgid "Setup page PIN"
+msgstr ""
+
+msgctxt "#30040"
+msgid "Advanced"
+msgstr ""
+
+msgctxt "#30041"
+msgid "Detailed logging"
+msgstr ""
+
+msgctxt "#30042"
+msgid "WebDAV server"
+msgstr ""
+
+msgctxt "#30043"
+msgid "Lets another Kodi or a WebDAV app use your Drive through this device, with the user name and password below. Off: only this Kodi can use it."
+msgstr ""
+
+msgctxt "#30044"
+msgid "Setup page"
+msgstr ""
+
+msgctxt "#30045"
+msgid "4 to 8 digits. Needed to open the setup page without scanning the QR code."
+msgstr ""
+
+msgctxt "#30046"
+msgid "This device's network address"
+msgstr ""
+
+msgctxt "#30047"
+msgid "Shown in the QR code and setup address. Leave empty to detect it (VPN tunnels are skipped)."
+msgstr ""
+
+msgctxt "#30048"
+msgid "Sign-in relay address (optional)"
+msgstr ""
+
+msgctxt "#30049"
+msgid "https address of the GDrive Bridge callback page on your own web server. Then sign-in needs no copy and paste, and the Google client must be a Web application with this address as an authorised redirect URI."
+msgstr ""
+
+msgctxt "#30050"
+msgid "Hide files and folders starting with a dot"
+msgstr ""
+
+msgctxt "#30051"
+msgid "Hides things like .git or .ipynb_checkpoints that aren't media."
+msgstr ""
+
+msgctxt "#30052"
+msgid "Hide archives (.zip, .rar, .7z, .apk...)"
+msgstr ""
+
+msgctxt "#30053"
+msgid "Kodi opens archives like folders, reading them over the internet, which makes folders slow to open."
+msgstr ""

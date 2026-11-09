@@ -1,0 +1,29 @@
+v0.1.1 (2026-11-09)
+- Archive files (.zip, .rar, .7z, .apk and similar) are now hidden from Kodi by default.
+  Why: Kodi treats archives as folders. When it lists a folder that contains one, it opens
+  the archive to look inside, and it does this on its screen thread. Over Google Drive every
+  read of an archive is a separate ranged download that takes a second or two, and reading
+  one archive's index can take several. While that happens Kodi shows "Content Loading" and
+  stops responding, for tens of seconds per archive. Kodi can't play archives anyway, so
+  hiding them costs nothing. To show them again, turn off "Hide archives" in the Drive
+  settings or on the setup page.
+- Files and folders whose names start with a dot (.git, .ipynb_checkpoints...) are
+  hidden by default ("Hide files and folders starting with a dot"). Kodi otherwise scanned
+  their contents, and treats .ts code files as video.
+- Fixed the first sync failing with "Invalid field selection sharedWithMe".
+- A sign-in in progress now survives a Kodi restart.
+- The setup guide now includes adding yourself as a test user, and makes publishing the
+  app an optional last step.
+- Status is shared through a file instead of a Kodi window property, and the WebDAV
+  server never calls into Kodi while answering a request.
+- The icon is now a full square, so it fits Kodi's frames without dark corners.
+- Kodi shows a notification when Google stops accepting the sign-in (every 7 days while
+  the Google app is in Testing), so Drive doesn't just go quiet.
+- Sign-ins made with a browser on the Kodi device itself finish automatically (Google
+  returns to http://127.0.0.1:<WebDAV port>/callback). Google blocks WebView-based TV
+  browsers, so this needs a full browser such as Firefox.
+- Adds a stall recorder (addon_data/.../stall.log) for diagnosing hangs.
+
+v0.1.0 (2026-11-09)
+- First version: Google Drive as a read-only WebDAV source for Kodi, set up from any
+  browser via a QR code or PIN.

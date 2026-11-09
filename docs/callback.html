@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>GDrive Bridge sign-in</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 24px 16px; }
+  main { max-width: 560px; margin: 0 auto; }
+  a.button { display: inline-block; margin-top: 12px; padding: 10px 16px; border-radius: 8px;
+             background: #1a73e8; color: #fff; font-weight: 600; text-decoration: none; }
+  .hint { opacity: .75; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h2>GDrive Bridge</h2>
+  <p id="msg">Returning to your Kodi setup page...</p>
+  <p id="more" hidden><a class="button" id="go" href="#">Continue</a></p>
+  <p id="hint" class="hint" hidden>Your phone needs to be on your home Wi-Fi to reach Kodi.</p>
+</main>
+<script>
+// Static sign-in relay. Google sends the browser here after sign-in; the target
+// (this home network's GDrive Bridge setup page, "ip:port") rides in `state` after
+// the last '.'. Only private IPv4 addresses are allowed, so this page can't be used
+// to send anyone elsewhere. Nothing is stored or sent anywhere else.
+(function () {
+  var msg = document.getElementById('msg');
+  var search = location.search;
+  var state = new URLSearchParams(search).get('state') || '';
+  var dot = state.lastIndexOf('.');
+  var target = '';
+  try {
+    if (dot > 0) target = atob(state.slice(dot + 1).replace(/-/g, '+').replace(/_/g, '/'));
+  } catch (e) { target = ''; }
+  var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}):(\d{2,5})$/.exec(target);
+  var octets = m ? m.slice(1, 5).map(Number) : [];
+  var ok = m && octets.every(function (o) { return o < 256; }) && +m[5] < 65536 &&
+           (octets[0] === 10 || (octets[0] === 192 && octets[1] === 168) ||
+            (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31));
+  if (!ok) {
+    msg.textContent = 'This page only returns sign-ins to a GDrive Bridge setup page on your home network. ' +
+                      'Start the sign-in again from that page.';
+    return;
+  }
+  var url = 'http://' + target + '/relay' + search;
+  history.replaceState(null, '', location.pathname);   // keep the code out of history
+  document.getElementById('go').href = url;
+  setTimeout(function () {
+    msg.textContent = 'If nothing happened, tap Continue.';
+    document.getElementById('more').hidden = false;
+    document.getElementById('hint').hidden = false;
+  }, 2500);
+  location.replace(url);
+})();
+</script>
+</body>
+</html>
