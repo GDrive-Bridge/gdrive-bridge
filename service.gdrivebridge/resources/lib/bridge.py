@@ -1,7 +1,6 @@
 """The background service: owns sign-in, the Drive cache, the WebDAV server and the setup page."""
 import json
 import os
-import secrets
 import threading
 import time
 
@@ -66,7 +65,6 @@ class Bridge(object):
         self.stopping.clear()
         self.started = True
         common.quiet_until = time.time() + BOOT_DELAY
-        common.ensure_pin()
         common.migrate_settings()
         self.settings = common.get_settings()
         self.applied = dict(self.settings)
@@ -243,7 +241,7 @@ class Bridge(object):
             with self.lock:
                 self.setup_requested = time.time()
                 if self._start_setup() and payload.get('token'):
-                    self.setup.add_link(payload['token'])
+                    self.setup.add_link(payload['token'], payload.get('pin'))
             self.publish()
         elif command == 'refresh':
             self.request_refresh()
@@ -333,7 +331,7 @@ class Bridge(object):
 
     def reset(self):
         """Back to a fresh install: every account signed out (and revoked with Google), the
-        cached folders and setup-page logins gone, settings at their defaults and a new PIN.
+        cached folders and setup-page logins gone, settings at their defaults.
         The Google client ID and secret (and relay) are kept: setting those up again takes
         ten minutes and they are rarely the problem."""
         for account in list(self.accounts.all()):
@@ -350,7 +348,6 @@ class Bridge(object):
                 pass
         keep = ('client_id', 'client_secret', 'relay_url')
         values = {key: default for key, (_, default) in common.SETTINGS.items() if key not in keep}
-        values['setup_pin'] = '%06d' % secrets.randbelow(1000000)
         self.set_settings(values)   # Kodi then reports the change: servers restart as needed
         common.log('reset to defaults (Google client kept)')
         self.publish()
@@ -420,7 +417,6 @@ class Bridge(object):
             'setup_running': self.setup is not None,
             'setup_url': 'http://%s:%d/' % (ip, s['setup_port']),
             'setup_error': self.setup_error,
-            'pin': s['setup_pin'],
             'has_client': bool(s['client_id'] and s['client_secret']),
             'accounts': [self._account_status(a) for a in self.accounts.all()],
         }

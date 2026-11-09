@@ -57,7 +57,7 @@ def wait_for(check, seconds):
 class SetupDialog(xbmcgui.WindowDialog):
     """Full-screen panel with a QR code for the setup page; closes itself after sign-in."""
 
-    def __init__(self, link, st):
+    def __init__(self, link, st, pin):
         xbmcgui.WindowDialog.__init__(self)
         self.done = threading.Event()
         self.was_signed_in = st['signed_in']
@@ -87,7 +87,7 @@ class SetupDialog(xbmcgui.WindowDialog):
                      'On a computer or tablet, open this address and enter the PIN:')
         self.addControl(xbmcgui.ControlLabel(540, 290, 680, 40, '[B]%s[/B]' % st['setup_url'],
                                              font='font13', textColor=accent))
-        self.addControl(xbmcgui.ControlLabel(540, 334, 680, 40, 'PIN: [B]%s[/B]' % st['pin'],
+        self.addControl(xbmcgui.ControlLabel(540, 334, 680, 40, 'PIN: [B]%s[/B]' % pin,
                                              font='font13', textColor=white))
         self.state = xbmcgui.ControlLabel(540, 420, 680, 40, '', font='font13', textColor=muted)
         self.addControl(self.state)
@@ -125,8 +125,9 @@ class SetupDialog(xbmcgui.WindowDialog):
 
 def open_setup():
     token = secrets.token_urlsafe(9)
+    pin = '%06d' % secrets.randbelow(1000000)     # one-time, like the QR link
     asked = time.time() - 1
-    notify('setup', {'token': token})
+    notify('setup', {'token': token, 'pin': pin})
     # the status file outlives a killed Kodi, so wait for one written after this request
     st = wait_for(lambda s: s.get('updated', 0) >= asked and (s['setup_running'] or
                                                               s['setup_error']), 5)
@@ -137,7 +138,7 @@ def open_setup():
     if not st['setup_running']:
         xbmcgui.Dialog().ok(TITLE, st['setup_error'] or 'The setup page couldn\'t start.')
         return
-    dialog = SetupDialog(st['setup_url'] + '?t=' + token, st)
+    dialog = SetupDialog(st['setup_url'] + '?t=' + token, st, pin)
     poller = threading.Thread(target=dialog.poll)
     poller.daemon = True
     poller.start()
@@ -159,8 +160,8 @@ def show_status(st):
         '[B]Kodi source path:[/B] %s' % st['webdav'],
         '[B]Drive items cached:[/B] %d in %d folders' % (st['items'], st['folders']),
         '[B]Last change check:[/B] %s' % synced,
-        '[B]Setup page:[/B] %s (PIN %s)%s' % (st['setup_url'], st['pin'],
-                                              '' if st['setup_running'] else ', closed now'),
+        '[B]Setup page:[/B] %s%s' % (st['setup_url'],
+                                     '' if st['setup_running'] else ', closed now'),
     ]
     lines.append('[B]Updates:[/B] %s' % ('automatic, from GDrive Bridge Repository'
                                          if has_repository() else

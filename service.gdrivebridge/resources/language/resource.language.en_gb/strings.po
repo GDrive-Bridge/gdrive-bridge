@@ -78,7 +78,7 @@ msgid "Setup page available"
 msgstr ""
 
 msgctxt "#30036"
-msgid "Always (PIN or QR link needed)"
+msgid "Always (a new browser needs the PIN or QR code shown in Kodi)"
 msgstr ""
 
 msgctxt "#30037"
@@ -87,10 +87,6 @@ msgstr ""
 
 msgctxt "#30038"
 msgid "Setup page port"
-msgstr ""
-
-msgctxt "#30039"
-msgid "Setup page PIN"
 msgstr ""
 
 msgctxt "#30040"
@@ -111,10 +107,6 @@ msgstr ""
 
 msgctxt "#30044"
 msgid "Setup page"
-msgstr ""
-
-msgctxt "#30045"
-msgid "4 to 8 digits. Needed to open the setup page without scanning the QR code."
 msgstr ""
 
 msgctxt "#30046"

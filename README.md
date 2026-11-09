@@ -46,7 +46,8 @@ the settings back to their defaults; your Google client ID and secret are kept.
 ## Set up
 
 1. Open **Add-ons > GDrive Bridge > Set up on phone or computer**.
-2. Scan the QR code with your phone (or open the address shown and enter the PIN).
+2. Scan the QR code with your phone (or open the address shown and enter the PIN). The QR code
+   and PIN are new each time and work once.
 3. Follow **Step 1** on the setup page to create your own Google Cloud client (about 10 minutes,
    once): a **Web application** client with the redirect URI
    `https://gdrive-bridge.github.io/gdrive-bridge/callback.html`. Paste the downloaded JSON
@@ -101,7 +102,7 @@ All settings are on the setup page and in Kodi's add-on settings:
 | Check Drive for changes every | 60 s | |
 | WebDAV port | 8765 | Update your Kodi source if you change it |
 | Share Drive with other devices on my network | off | Basic-auth WebDAV for another Kodi |
-| Setup page | opens when you choose *Set up on phone or computer* in Kodi and closes after 15 minutes idle; can be set to always on (port 8766) | PIN or one-time QR link needed |
+| Setup page | opens when you choose *Set up on phone or computer* in Kodi and closes after 15 minutes idle; can be set to always on (port 8766) | a new browser needs the one-time QR link or PIN shown in Kodi; it then stays logged in for 30 days |
 
 **Why archives are hidden:** Kodi treats `.zip`/`.rar`/`.apk` files as folders and opens them to
 look inside, on its screen thread, when it lists a folder. Over Google Drive each read is a

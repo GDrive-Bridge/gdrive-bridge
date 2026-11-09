@@ -37,7 +37,6 @@ SETTINGS = {
     'lan_password': ('str', ''),
     'setup_mode': ('int', 1),          # 0 = always on, 1 = only when opened from Kodi (default)
     'setup_port': ('int', 8766),
-    'setup_pin': ('str', ''),
     'lan_address': ('str', ''),
     'relay_url': ('str', ''),
     'debug': ('bool', False),
@@ -296,12 +295,6 @@ def _ioctl_addresses():
     return out
 
 
-def ensure_pin():
-    pin = get_setting('setup_pin')
-    if not (pin.isdigit() and 4 <= len(pin) <= 8):
-        pin = '%06d' % secrets.randbelow(1000000)
-        set_setting('setup_pin', pin)
-    return pin
 
 
 def ssl_context():

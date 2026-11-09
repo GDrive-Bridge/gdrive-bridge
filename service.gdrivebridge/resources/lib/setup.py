@@ -144,6 +144,7 @@ class SetupServer(http.server.ThreadingHTTPServer):
         self.sessions_path = os.path.join(common.profile_dir(), 'sessions.json')
         self.sessions = common.read_json(self.sessions_path, {}) or {}
         self.links = {}
+        self.pins = {}          # one-time PINs shown in Kodi -> expiry
         self.failures = []
         self.last_activity = time.time()
         self.conns = set()
@@ -172,11 +173,15 @@ class SetupServer(http.server.ThreadingHTTPServer):
                 pass
         self.server_close()
 
-    def add_link(self, token):
+    def add_link(self, token, pin=None):
+        """Kodi's setup screen: a one-time QR link and a one-time PIN, both short-lived."""
         with self.lock:
             now = time.time()
             self.links = {k: v for k, v in self.links.items() if v > now}
             self.links[token] = now + LINK_TTL
+            if pin:
+                self.pins = {k: v for k, v in self.pins.items() if v > now}
+                self.pins[pin] = now + LINK_TTL
 
     def use_link(self, token):
         with self.lock:
@@ -209,10 +214,15 @@ class SetupServer(http.server.ThreadingHTTPServer):
             self.failures = [t for t in self.failures if now - t < LOCKOUT]
             if len(self.failures) >= MAX_PIN_TRIES:
                 return None
-            ok = hmac.compare_digest(pin.encode(), self.bridge.settings['setup_pin'].encode())
-            if not ok:
+            match = None
+            for known, expiry in list(self.pins.items()):
+                if expiry > now and hmac.compare_digest(pin.encode(), known.encode()):
+                    match = known
+            if match is None:
                 self.failures.append(now)
-            return ok
+                return False
+            del self.pins[match]        # works once
+            return True
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -333,8 +343,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif ok is None:
                 self._send(429, self._login_page('Too many wrong PINs. Wait 5 minutes.'))
             else:
-                self._send(403, self._login_page('Wrong PIN. It is shown in Kodi: GDrive Bridge '
-                                                 '> Set up on phone or computer.'))
+                self._send(403, self._login_page('Wrong or used PIN. Each PIN works once: open '
+                                                 'GDrive Bridge > Set up on phone or computer in '
+                                                 'Kodi for a new one.'))
             return
         sid = self._sid()
         session = self.server.session(sid)
@@ -453,12 +464,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             errors.append('the relay address must start with https://')
         else:
             values['relay_url'] = relay
-        pin = form.get('setup_pin', '').strip()
-        if pin and pin != cur['setup_pin']:
-            if pin.isdigit() and 4 <= len(pin) <= 8:
-                values['setup_pin'] = pin
-            else:
-                errors.append('the PIN must be 4-8 digits')
         if errors:
             self._redirect('/?e=1#settings', msg='Not saved: ' + '; '.join(errors) + '.')
             return
@@ -683,11 +688,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'placeholder="%s">'
             '<h2 style="margin-top:20px">This setup page</h2>'
             '<label for="setup_mode">Available</label><select id="setup_mode" name="setup_mode">'
-            '<option value="0"%s>Always (PIN or QR link needed)</option>'
+            '<option value="0"%s>Always (a new browser needs the PIN or QR code shown in Kodi)'
+            '</option>'
             '<option value="1"%s>Only after opening it from Kodi (closes after 15 minutes idle)'
             '</option></select>%s'
-            '<label for="setup_pin">PIN</label><input id="setup_pin" name="setup_pin" type="text" '
-            'inputmode="numeric" value="%s">'
             '<h2 style="margin-top:20px">Sign-in relay (optional)</h2>'
             '<label for="relay_url">Relay address</label><input id="relay_url" name="relay_url" '
             'type="text" inputmode="url" value="%s" placeholder="https://gdrive-bridge.github.io/gdrive-bridge/callback.html">'
@@ -718,7 +722,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                'saved (enter to change)' if s['lan_password'] else 'required when sharing',
                '' if s['setup_mode'] else ' selected', ' selected' if s['setup_mode'] else '',
                num('setup_port', 'Setup page port'),
-               html.escape(s['setup_pin']),
                html.escape(s['relay_url']),
                num('webdav_port', 'WebDAV port', 'If you change it, update the Kodi source too.'),
                check('debug', 'Detailed logging')))

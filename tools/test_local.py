@@ -473,7 +473,7 @@ def test_setup():
     real_lan_address = common.lan_address
     common.lan_address = lambda: '192.0.2.20'      # the device got a new address while running
     try:
-        b.on_notification(common.ADDON_ID, 'Other.setup', json.dumps({'token': 'kodi-qr'}))
+        b.on_notification(common.ADDON_ID, 'Other.setup', json.dumps({'token': 'kodi-qr', 'pin': '246810'}))
     finally:
         common.lan_address = real_lan_address
     check(b.status()['setup_url'] == 'http://192.0.2.20:18766/',
@@ -488,8 +488,9 @@ def test_setup():
     a.setSettingInt('setup_mode', common.SETUP_ALWAYS)   # rest of the tests: always on
     b.on_settings_changed()
     port = 18766
-    pin = common.get_setting('setup_pin')
-    check(pin.isdigit() and len(pin) == 6, 'PIN generated: %s' % pin)
+    # Kodi's setup screen hands the page a one-time PIN (and QR link) each time it opens
+    pin = '135790'
+    b.setup.add_link('screen-1', pin)
 
     s, h, body = request(port, 'GET', '/')
     check(s == 200 and b'Enter the PIN' in body, 'login page without a session')
@@ -500,6 +501,17 @@ def test_setup():
                          'pin=' + pin)
     cookie = h.get('Set-Cookie', '').split(';')[0]
     check(s == 303 and cookie.startswith('gdb_session='), 'right PIN gives a session cookie')
+    s, h, body = request(port, 'POST', '/login', {'Content-Type': 'application/x-www-form-urlencoded'},
+                         'pin=' + pin)
+    check(s == 403, 'each PIN works once')
+    b.setup.add_link('screen-old', '975310')
+    b.setup.pins['975310'] = 1                      # expired
+    s, h, body = request(port, 'POST', '/login', {'Content-Type': 'application/x-www-form-urlencoded'},
+                         'pin=975310')
+    check(s == 403, 'an expired PIN is refused')
+    check('setup_pin' not in common.SETTINGS, 'no fixed PIN setting any more')
+    pin = '864200'
+    b.setup.add_link('screen-2', pin)
 
     s, h, body = request(port, 'GET', '/', {'Cookie': cookie})
     csrf = re.search(rb'name="csrf" value="([^"]+)"', body).group(1).decode()
@@ -622,14 +634,12 @@ def test_setup():
     check(b"addEventListener('submit'" in body, 'pages include the form script')
 
     s, h, _ = post('/settings', {'show_shared': 'on', 'poll_interval': '120', 'webdav_port': '18765',
-                                 'setup_port': '18766', 'setup_mode': '0', 'lan_user': 'kodi',
-                                 'setup_pin': pin})
+                                 'setup_port': '18766', 'setup_mode': '0', 'lan_user': 'kodi'})
     check(not common.get_setting('show_drives') and common.get_setting('poll_interval') == 120,
           'settings saved from the page')
     check(h.get('Location', '').startswith('/?m=Settings') and h['Location'].endswith('#settings'),
           'saved message goes before the #fragment: %s' % h.get('Location'))
-    s, h, _ = post('/settings', {'poll_interval': '5', 'webdav_port': '18765', 'setup_port': '18766',
-                                 'setup_pin': '12'})
+    s, h, _ = post('/settings', {'poll_interval': '5', 'webdav_port': '18765', 'setup_port': '18766'})
     check('e=1' in h.get('Location', ''), 'bad values rejected')
 
     # relay sign-in: Google -> relay page -> /relay on this device, no cookie needed
@@ -826,7 +836,6 @@ def test_reset():
         common.set_setting('client_id', 'my-client')
         common.set_setting('client_secret', 'my-secret')
         common.set_setting('hide_dot', False)
-        common.set_setting('setup_pin', '123456')
         b.settings = common.get_settings()
         b.accounts.main.creds.save({'refresh_token': 'r1'}, 'my-client', 'my-secret', 'a@example.com')
         extra = b.accounts.create()
@@ -840,8 +849,7 @@ def test_reset():
         check(not st['signed_in'] and len(b.accounts.all()) == 1 and not os.path.exists(auth.token_path()),
               'reset signs out every account and removes the extra ones')
         check(not os.path.exists(sessions), 'reset logs every browser out of the setup page')
-        check(common.get_setting('hide_dot') is True and common.get_setting('setup_pin') != '123456',
-              'reset puts settings back to their defaults with a new PIN')
+        check(common.get_setting('hide_dot') is True, 'reset puts settings back to their defaults')
         check(common.get_setting('client_id') == 'my-client' and common.get_setting('client_secret') == 'my-secret',
               'reset keeps the Google client ID and secret')
         check(b.accounts.main.label == '', 'reset clears the account label')
