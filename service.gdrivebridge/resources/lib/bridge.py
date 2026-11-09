@@ -1,6 +1,7 @@
 """The background service: owns sign-in, the Drive cache, the WebDAV server and the setup page."""
 import json
 import os
+import secrets
 import threading
 import time
 
@@ -248,6 +249,8 @@ class Bridge(object):
             self.request_refresh()
         elif command == 'signout':
             self.sign_out(payload.get('account', MAIN))
+        elif command == 'reset':
+            self.reset()
 
     # ---- account --------------------------------------------------------
     def finish_signin(self, pasted):
@@ -326,6 +329,30 @@ class Bridge(object):
         if account.id != MAIN:
             self.accounts.remove(account)
         common.log('signed out %s' % aid)
+        self.publish()
+
+    def reset(self):
+        """Back to a fresh install: every account signed out (and revoked with Google), the
+        cached folders and setup-page logins gone, settings at their defaults and a new PIN.
+        The Google client ID and secret (and relay) are kept: setting those up again takes
+        ten minutes and they are rarely the problem."""
+        for account in list(self.accounts.all()):
+            self.sign_out(account.id)
+        self.accounts.main.label = ''
+        self.accounts.save()
+        with self.lock:
+            self._stop_setup()
+        self.signin.pending.clear()
+        for name in ('sessions.json', 'pending.json'):
+            try:
+                os.remove(os.path.join(common.profile_dir(), name))
+            except OSError:
+                pass
+        keep = ('client_id', 'client_secret', 'relay_url')
+        values = {key: default for key, (_, default) in common.SETTINGS.items() if key not in keep}
+        values['setup_pin'] = '%06d' % secrets.randbelow(1000000)
+        self.set_settings(values)   # Kodi then reports the change: servers restart as needed
+        common.log('reset to defaults (Google client kept)')
         self.publish()
 
     def rename_account(self, aid, label):

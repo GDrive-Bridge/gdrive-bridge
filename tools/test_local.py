@@ -815,8 +815,44 @@ def test_shutdown():
     common.stopping.clear()
 
 
+def test_reset():
+    print('\n== Reset ==')
+    from resources.lib import bridge as bridge_mod
+    real_post = auth._post
+    auth._post = lambda url, fields: (200, {})       # revoking with Google
+    a = xbmcaddon.Addon(common.ADDON_ID)
+    try:
+        b = bridge_mod.Bridge(drive_factory=lambda creds: FakeDrive())
+        common.set_setting('client_id', 'my-client')
+        common.set_setting('client_secret', 'my-secret')
+        common.set_setting('hide_dot', False)
+        common.set_setting('setup_pin', '123456')
+        b.settings = common.get_settings()
+        b.accounts.main.creds.save({'refresh_token': 'r1'}, 'my-client', 'my-secret', 'a@example.com')
+        extra = b.accounts.create()
+        extra.creds.save({'refresh_token': 'r2'}, 'my-client', 'my-secret', 'b@example.com')
+        b.accounts.main.label = 'Mine'
+        b.accounts.save()
+        sessions = os.path.join(common.profile_dir(), 'sessions.json')
+        common.write_json(sessions, {'x': {'exp': 9e9}})
+        b.reset()
+        st = b.status()
+        check(not st['signed_in'] and len(b.accounts.all()) == 1 and not os.path.exists(auth.token_path()),
+              'reset signs out every account and removes the extra ones')
+        check(not os.path.exists(sessions), 'reset logs every browser out of the setup page')
+        check(common.get_setting('hide_dot') is True and common.get_setting('setup_pin') != '123456',
+              'reset puts settings back to their defaults with a new PIN')
+        check(common.get_setting('client_id') == 'my-client' and common.get_setting('client_secret') == 'my-secret',
+              'reset keeps the Google client ID and secret')
+        check(b.accounts.main.label == '', 'reset clears the account label')
+    finally:
+        auth._post = real_post
+        a.setSettingString('client_id', '')
+        a.setSettingString('client_secret', '')
+
+
 try:
-    for test in (test_shutdown, test_webdav, test_read_ahead, test_setup):
+    for test in (test_shutdown, test_webdav, test_read_ahead, test_setup, test_reset):
         try:
             test()
         except Exception:               # a crash is a failure, not a silent skip

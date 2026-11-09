@@ -16,6 +16,19 @@ import xbmcgui
 from . import common, qr
 
 TITLE = 'GDrive Bridge'
+REPO_ID = 'repository.gdrivebridge'
+REPO_URL = 'https://gdrive-bridge.github.io/gdrive-bridge/repo/'
+UPDATES_HELP = (
+    'This copy of GDrive Bridge doesn\'t update itself: it was installed from a zip file, and '
+    'Kodi only updates add-ons from the repository they came from.[CR][CR]'
+    '[B]1.[/B] Settings > File manager > Add source: enter [B]%s[/B] and name it '
+    'GDrive Bridge.[CR]'
+    '[B]2.[/B] Settings > Add-ons > Install from zip file > GDrive Bridge: choose '
+    'repository.gdrivebridge-1.0.0.zip.[CR]'
+    '[B]3.[/B] Add-ons > My add-ons > Services > GDrive Bridge: choose [B]Versions[/B] and pick '
+    'the version from GDrive Bridge Repository.[CR][CR]'
+    'Your sign-in and settings are kept. After that Kodi installs new versions automatically.'
+    % REPO_URL)
 BACK_ACTIONS = (9, 10, 92, 216, 247, 257, 275, 61448)
 
 
@@ -149,6 +162,9 @@ def show_status(st):
         '[B]Setup page:[/B] %s (PIN %s)%s' % (st['setup_url'], st['pin'],
                                               '' if st['setup_running'] else ', closed now'),
     ]
+    lines.append('[B]Updates:[/B] %s' % ('automatic, from GDrive Bridge Repository'
+                                         if has_repository() else
+                                         'not automatic (see "Turn on automatic updates")'))
     if st['error']:
         lines.append('[B]Last error:[/B] %s' % st['error'])
     for a in st.get('accounts', [])[1:]:
@@ -229,6 +245,42 @@ def add_source_help(st):
         xbmc.executebuiltin('ActivateWindow(Videos,sources://video/,return)')
 
 
+def has_repository():
+    return xbmc.getCondVisibility('System.HasAddon(%s)' % REPO_ID)
+
+
+def updates_help():
+    xbmcgui.Dialog().textviewer('%s: automatic updates' % TITLE, UPDATES_HELP)
+
+
+def updates_hint_once():
+    """Point a zip install at the repository, once (the menu keeps an entry for it)."""
+    marker = os.path.join(common.profile_dir(), 'updates_hint_shown')
+    if has_repository() or os.path.exists(marker):
+        return
+    try:
+        open(marker, 'w').close()
+    except OSError:
+        return
+    updates_help()
+
+
+def check_updates():
+    xbmc.executebuiltin('UpdateAddonRepos')
+    xbmcgui.Dialog().notification(TITLE, 'Checking for updates. A new version installs by itself.')
+
+
+def reset(st):
+    if not xbmcgui.Dialog().yesno(TITLE, 'Reset GDrive Bridge? This signs out every account (also '
+                                         'with Google), clears the cached Drive folders and puts '
+                                         'all settings back to their defaults, with a new PIN. '
+                                         'Your Google client ID and secret are kept.'):
+        return
+    notify('reset')
+    wait_for(lambda s: not s['signed_in'] and len(s.get('accounts', [])) <= 1, 10)
+    xbmcgui.Dialog().notification(TITLE, 'Reset done. Set up again from the menu.')
+
+
 def sign_out(st):
     if not st['signed_in']:
         xbmcgui.Dialog().ok(TITLE, 'Not signed in.')
@@ -246,6 +298,7 @@ def menu():
         xbmcgui.Dialog().ok(TITLE, 'The GDrive Bridge service isn\'t running yet. Try again in a '
                                    'moment.')
         return
+    updates_hint_once()
     entries = [('Set up on phone or computer', open_setup),
                ('Status', lambda: show_status(service_status() or st)),
                ('Refresh Drive folders', lambda: (notify('refresh'), xbmcgui.Dialog().notification(
@@ -255,6 +308,11 @@ def menu():
                ('Add Google Drive to Pictures', lambda: add_pictures_help(st))]
     if st['signed_in']:
         entries.append(('Sign out', lambda: sign_out(st)))
+    if has_repository():
+        entries.append(('Check for updates', check_updates))
+    else:
+        entries.insert(1, ('Turn on automatic updates', updates_help))
+    entries.append(('Reset GDrive Bridge', lambda: reset(st)))
     entries.append(('Settings', lambda: common.addon().openSettings()))
     header = '%s - %s' % (TITLE, st['email'] if st['signed_in'] else 'not signed in')
     choice = xbmcgui.Dialog().select(header, [label for label, _ in entries])

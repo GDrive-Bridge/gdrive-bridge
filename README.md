@@ -36,7 +36,12 @@ GDrive Bridge automatically when a new version is released.
 4. **Install from repository > GDrive Bridge Repository**, and install **GDrive Bridge**.
 
 Each release's zip is also on [Releases](https://github.com/GDrive-Bridge/gdrive-bridge/releases/latest)
-for **Install from zip file**, but a copy installed that way doesn't update itself.
+for **Install from zip file**, but a copy installed that way doesn't update itself. The add-on's
+menu then shows **Turn on automatic updates** with the steps to link it to the repository (your
+sign-in and settings are kept). Once linked, the menu has **Check for updates** instead.
+
+**Reset GDrive Bridge** (add-on menu) signs out every account, clears the cached folders and puts
+the settings back to their defaults; your Google client ID and secret are kept.
 
 ## Set up
 
