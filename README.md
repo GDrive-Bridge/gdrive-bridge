@@ -45,6 +45,11 @@ asks for a home page and privacy policy; you can use this project's:
 - Privacy policy: `https://gdrive-bridge.github.io/gdrive-bridge/privacy.html`
 - Authorised domain: `gdrive-bridge.github.io`
 
+Google then shows *"Your branding is not being shown to users"* (the pages aren't on your own
+domain) and *"Your app requires verification"*. Both are expected and don't stop you publishing;
+verification only matters for apps with more than 100 users. Sign-in shows an *unverified app*
+warning instead: choose **Advanced > Go to … (unsafe)**.
+
 Then sign in once more (sign-ins made while testing keep the 7-day limit).
 
 ## Settings

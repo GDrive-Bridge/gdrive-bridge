@@ -53,8 +53,10 @@ OPTIONAL_STEP = (
     'home page <code>https://gdrive-bridge.github.io/gdrive-bridge/</code>, Application privacy policy link <code>https://gdrive-bridge.github.io/gdrive-bridge/privacy.html</code>, and '
     'add <code>gdrive-bridge.github.io</code> under <b>Authorised domains</b>; no logo. Save, '
     'then on <a href="https://console.cloud.google.com/auth/audience" target="_blank" '
-    'rel="noopener">Audience</a> tap <b>Publish app</b>. Google\'s verification is not needed '
-    'for your own use (you\'ll see an <i>unverified app</i> warning at sign-in). Afterwards, sign '
+    'rel="noopener">Audience</a> tap <b>Publish app</b>. Ignore <i>Your branding is not being '
+    'shown</i> (the pages aren\'t on your own domain) and <i>Your app requires verification</i>: '
+    'neither is needed for your own use; you\'ll see an <i>unverified app</i> warning at sign-in '
+    'instead. Afterwards, sign '
     'in here once more: sign-ins made while testing still expire after 7 days.')
 
 CSS = """
