@@ -67,6 +67,17 @@ OPTIONAL_STEP = (
 # form POST over http. The same POST sent by fetch() doesn't warn, so forms go through
 # this; without JavaScript they still submit normally.
 SCRIPT = """
+document.addEventListener('change', function (e) {
+  var input = e.target;
+  if (input.id !== 'cfile' || !input.files || !input.files[0]) return;
+  var reader = new FileReader();
+  reader.onload = function () {
+    var form = document.getElementById('clientform');
+    form.querySelector('textarea[name=client_json]').value = reader.result;
+    if (form.requestSubmit) form.requestSubmit(); else form.querySelector('button').click();
+  };
+  reader.readAsText(input.files[0]);
+});
 document.addEventListener('submit', function (e) {
   var f = e.target;
   if (!window.fetch || (f.getAttribute('method') || '').toLowerCase() !== 'post') return;
@@ -500,10 +511,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             '<p>GDrive Bridge signs in with your own Google Cloud client, so nothing goes through '
             'anyone else\'s server. This takes about 10 minutes, once. On a phone, turn on your '
             'browser\'s <i>Desktop site</i> option if the Cloud console is cramped.</p>'
-            '<ol>%s<li>Open the downloaded JSON file, copy all of it, paste it below and tap '
-            '<b>Save client</b>.</li></ol>%s'
-            '<form method="post" action="/client">%s'
-            '<label for="cj">Downloaded JSON file</label>'
+            '<ol>%s<li>Tap <b>Choose the downloaded JSON file</b> below and pick it (on an '
+            'iPhone it\'s in Files, under Downloads or your browser\'s folder). Or open it, copy '
+            'all of it and paste it into the box, then tap <b>Save client</b>.</li></ol>%s'
+            '<form method="post" action="/client" id="clientform">%s'
+            '<label class="button secondary" for="cfile" id="cfilelabel">Choose the downloaded '
+            'JSON file</label><input id="cfile" type="file" accept=".json,application/json,'
+            'text/plain" hidden>'
+            '<label for="cj">Or paste the JSON file\'s contents</label>'
             '<textarea id="cj" name="client_json" autocomplete="off" '
             'placeholder=\'{"web":{"client_id":"...","client_secret":"..."}}\'></textarea>'
             '<details><summary>Or type the client ID and secret</summary>'
