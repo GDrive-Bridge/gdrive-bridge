@@ -1,4 +1,6 @@
 Unreleased
+- Setup page: stays logged in when opened from a link in another app (the login cookie
+  was SameSite=Strict, which browsers don't send in that case).
 - Setup page: "Choose the downloaded JSON file" picks the client file (on an iPhone, from
   Files) and saves it, so there's nothing to copy and paste.
 - Sign-in without copy and paste: the setup guide now creates a Web application client that

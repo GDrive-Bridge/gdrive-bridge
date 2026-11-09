@@ -239,7 +239,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return {k: v[0] for k, v in urllib.parse.parse_qs(raw, keep_blank_values=True).items()}
 
     def _cookie(self, sid, max_age):
-        return '%s=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Strict' % (COOKIE, sid, max_age)
+        # Lax, not Strict: Strict is withheld when the page is opened from another app or
+        # site (e.g. tapping the link in a chat app), which looked like a lost login.
+        # Cross-site form posts still don't carry it, and every form has a CSRF token.
+        return '%s=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Lax' % (COOKIE, sid, max_age)
 
     # ---- routes ---------------------------------------------------------
     def do_GET(self):
@@ -332,7 +335,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _finish_relay(self, query):
         # Authorised by the unguessable state of a pending sign-in plus PKCE, not by
-        # the session cookie (SameSite=Strict keeps it off this cross-site redirect).
+        # the session cookie (the relay hop may arrive without it).
         try:
             email = self.server.bridge.finish_signin('?' + query)
             body = ('<div class="msg good">Signed in as <b>%s</b>.</div><section><h2>All done'
