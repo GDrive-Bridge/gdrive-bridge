@@ -1,3 +1,10 @@
+v0.3.2 (2026-11-09)
+- Stops cleanly when Kodi asks: every background task ends within 3 seconds, including a
+  request to Google that is waiting for an answer. Before, Kodi sometimes had to kill the
+  service, which slowed Kodi's exit and could leave an add-on update unfinished.
+- If GDrive Bridge disappears from Kodi after updating from 0.3.1 or earlier, restart Kodi
+  once (the old version is what Kodi stops during that update).
+
 v0.3.1 (2026-11-09)
 - The setup QR code and address use the device's current home-network address, looked up each
   time you choose "Set up on phone or computer". Before, an address change while Kodi was
