@@ -370,11 +370,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._redirect('/?e=1', msg='The client ID ends with .apps.googleusercontent.com, '
                                         'and the secret can\'t be empty.')
             return
+        bridge = self.server.bridge
+        same = (cid == bridge.settings['client_id'] and secret == bridge.settings['client_secret'])
         values = {'client_id': cid, 'client_secret': secret}
         if relay is not None:
             values['relay_url'] = relay
-        self.server.bridge.set_settings(values)
-        self._redirect('/', msg='Client saved. Now sign in with Google.')
+        bridge.set_settings(values)
+        if same:
+            msg = 'Client saved (unchanged).'
+        elif bridge.creds.signed_in:
+            msg = 'Client saved. Sign in again (below) to start using it.'
+        else:
+            msg = 'Client saved. Now sign in with Google.'
+        self._redirect('/', msg=msg)
 
     def _save_settings(self, form):
         errors = []
