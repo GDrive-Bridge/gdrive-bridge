@@ -64,7 +64,7 @@ def run():
         bridge.stop()
     finally:
         stop.set()
-        t.join(3)
+        t.join(0.5)
         report_survivors(time.time() - started)
 
 

@@ -15,7 +15,9 @@ from .setup import SetupServer
 from .webdav import WebDAVServer
 
 SETUP_IDLE = 15 * 60
-STOP_TIMEOUT = 3        # seconds stop() waits for threads (Kodi kills scripts after 5)
+STOP_TIMEOUT = 1.5      # seconds stop() waits for threads; Kodi kills scripts after 5,
+                        # counted from its request and while Kodi is busy (startup)
+BOOT_DELAY = 15         # seconds before the first sync / read-ahead (see common.quiet_until)
 
 
 class Bridge(object):
@@ -62,6 +64,7 @@ class Bridge(object):
     def start(self):
         self.stopping.clear()
         self.started = True
+        common.quiet_until = time.time() + BOOT_DELAY
         common.ensure_pin()
         common.migrate_settings()
         self.settings = common.get_settings()
@@ -340,6 +343,8 @@ class Bridge(object):
 
     # ---- background sync ------------------------------------------------
     def _sync_loop(self):
+        if not common.wait_until_quiet():
+            return
         while not self.stopping.is_set():
             for account in self.accounts.all():
                 if self.stopping.is_set():

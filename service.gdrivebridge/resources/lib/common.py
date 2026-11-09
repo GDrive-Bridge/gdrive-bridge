@@ -74,6 +74,10 @@ def profile_dir():
 # every loop and retry checks `stopping`, open Google connections are cut, and background
 # threads stop calling into Kodi.
 stopping = threading.Event()
+# Kodi installs add-on updates a second or two after startup, stopping this service then.
+# Background Google traffic waits until this time so that stop finds nothing in flight
+# (SlyGuy Common waits 10 s on boot for the same reason). Set by Bridge.start().
+quiet_until = 0
 _connections = weakref.WeakSet()       # outgoing HTTPS connections, cut by abort_network()
 _connections_lock = threading.Lock()
 
@@ -95,11 +99,21 @@ def https_connection(host, timeout=30):
     class Connection(http.client.HTTPSConnection):
         def connect(self):
             http.client.HTTPConnection.connect(self)
+            # a connection opened while (or just after) abort_network() ran must not live on
+            if stopping.is_set():
+                self.sock.close()
+                raise OSError('the service is stopping')
             self.sock = ssl_context().wrap_socket(self.sock, server_hostname=self.host,
                                                   do_handshake_on_connect=False)
             self.sock.do_handshake()
 
     return track(Connection(host, timeout=timeout, context=ssl_context()))
+
+
+def wait_until_quiet():
+    """Wait out the startup quiet time. Returns False if the service is stopping."""
+    delay = quiet_until - time.time()
+    return not (delay > 0 and stopping.wait(delay)) and not stopping.is_set()
 
 
 def abort_network():

@@ -24,7 +24,8 @@ sys.path.insert(0, os.path.join(ROOT, 'tools', 'fakekodi'))
 import xbmc  # noqa: E402
 xbmc.VERBOSE = False
 import xbmcaddon  # noqa: E402
-from resources.lib import accounts, auth, cache, common, webdav  # noqa: E402
+from resources.lib import accounts, auth, bridge, cache, common, webdav  # noqa: E402
+bridge.BOOT_DELAY = 0       # tests sync at once; test_shutdown covers the startup wait
 from resources.lib.drive import DriveError, FOLDER_MIME, SHORTCUT_MIME  # noqa: E402
 
 FAILS = []
@@ -739,8 +740,8 @@ def test_shutdown():
         b.stop()
         took = time.time() - started
         left = [x.name for x in threading.enumerate() if x is not threading.main_thread()]
-        check(took < 3.5 and not left,
-              'stop() ends every thread within 3 s (took %.1f s, left: %s)' % (took, left))
+        check(took < 1.8 and not left,
+              'stop() ends every thread within 1.5 s (took %.1f s, left: %s)' % (took, left))
         check(errors and isinstance(errors[0], DriveError),
               'a Google request that never answers is interrupted: %r' % errors)
     finally:
@@ -749,6 +750,59 @@ def test_shutdown():
         drive_mod.HOST = real_host
         hole.close()
         common.stopping.clear()
+
+    # a reply that never comes on an established connection is cut too
+    plain = socket.socket()
+    plain.bind(('127.0.0.1', 0))
+    plain.listen(8)
+    errors = []
+
+    def waiting():
+        conn = common.track(http.client.HTTPConnection('127.0.0.1', plain.getsockname()[1],
+                                                       timeout=30))
+        try:
+            conn.request('GET', '/')
+            conn.getresponse()
+        except Exception as e:
+            errors.append(e)
+    t = threading.Thread(target=waiting, name='test-reply')
+    t.start()
+    time.sleep(0.3)
+    started = time.time()
+    common.abort_network()
+    t.join(2)
+    check(not t.is_alive() and errors and time.time() - started < 0.5,
+          'a request waiting for its reply ends at once when the network is cut: %r' % errors)
+
+    # a connection opened after the cut (the sync was between requests) fails at once
+    common.stopping.set()
+    common.abort_network()
+    started = time.time()
+    try:
+        conn = common.https_connection('127.0.0.1:%d' % plain.getsockname()[1])
+        conn.request('GET', '/')
+        opened = True
+    except OSError:
+        opened = False
+    check(not opened and time.time() - started < 0.5,
+          'no new Google connection is made once stopping')
+    common.stopping.clear()
+    plain.close()
+
+    # Kodi updates add-ons right after startup: a stop in the startup quiet time is instant
+    bridge_mod.BOOT_DELAY = 30
+    b3 = bridge_mod.Bridge(drive_factory=lambda creds: FakeDrive())
+    b3.start()
+    time.sleep(0.3)
+    started = time.time()
+    b3.stop()
+    took = time.time() - started
+    left = [x.name for x in threading.enumerate() if x is not threading.main_thread()]
+    check(took < 0.8 and not left,
+          'stopping during the startup quiet time is immediate (%.1f s, left: %s)' % (took, left))
+    bridge_mod.BOOT_DELAY = 0
+    common.quiet_until = 0
+    common.stopping.clear()
 
     # a stop before start (Kodi updating the add-on as it starts) must not wipe the cache
     tree_path = os.path.join(common.profile_dir(), 'cache.json')

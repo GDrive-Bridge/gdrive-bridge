@@ -318,6 +318,8 @@ class DriveTree(object):
         self.prefetch_wake.set()
 
     def _prefetch_loop(self):
+        if not common.wait_until_quiet():
+            return
         idle_since = time.time()
         while not common.stopping.is_set():
             with self.lock:
