@@ -1,3 +1,6 @@
+v0.3.6.1 (2026-11-10)
+- What's new on the add-on's info page lists one version per line, newest first.
+
 v0.3.6 (2026-11-10)
 - Settings show the detected network address (greyed out, updated each time the service starts
   and each time you open setup) above the override field, which stays empty unless you type in
