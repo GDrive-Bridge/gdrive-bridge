@@ -16,6 +16,8 @@ from .drive import DriveError, FOLDER_MIME, SHORTCUT_MIME, GOOGLE_APPS
 TOP, SHARED, DRIVES, STARRED = '~top', '~shared', '~drives', '~starred'
 SEARCH_ROOT, SEARCH = '~searchroot', '~search:'   # '~search:<term>' listings
 SEARCH_TTL = 10 * 60
+SEARCH_KEEP = 20          # searches kept in memory; older ones are fetched again if reopened
+FETCH_LOCKS_MAX = 256     # idle per-folder fetch locks are dropped beyond this
 # Top-level names an extra account's folder can never take
 RESERVED = ('My Drive', 'Shared with me', 'Shared drives', 'Starred', 'Search')
 # Image formats Kodi can't decode; served as Google's JPEG rendering instead
@@ -262,10 +264,22 @@ class DriveTree(object):
                 for f in files:
                     self.nodes[f['id']] = _node(f)
                     ids.append(f['id'])
+                self.listings.pop(key, None)        # re-added last: the newest search
                 self.listings[key] = {'t': time.time(), 'ids': ids}
                 self.entries.pop(key, None)
                 self.dirty = True
+                if key.startswith(SEARCH):
+                    self._trim_searches()
+                if len(self.fetch_locks) > FETCH_LOCKS_MAX:
+                    self.fetch_locks = {k: lk for k, lk in self.fetch_locks.items() if lk.locked()}
             return ids
+
+    def _trim_searches(self):
+        # caller holds self.lock; listings keep insertion order, so the oldest go first
+        searches = [k for k in self.listings if k.startswith(SEARCH)]
+        for key in searches[:-SEARCH_KEEP]:
+            self.listings.pop(key, None)
+            self.entries.pop(key, None)
 
     # ---- read-ahead -----------------------------------------------------
     def read_ahead_folder(self, key):

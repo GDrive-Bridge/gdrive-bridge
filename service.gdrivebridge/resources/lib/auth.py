@@ -104,11 +104,16 @@ class SignIn(object):
             'prompt': 'select_account consent' if choose_account else 'consent',
         })
 
-    def finish(self, pasted, client_id, client_secret):
+    def finish(self, pasted, client_id, client_secret, require_state=False):
         """Exchange the pasted redirect address (or bare code).
 
+        A bare code is only accepted from the logged-in setup page; Google's redirects
+        (relay, loopback callback) always carry the state, so `require_state` is set there.
         Returns (token response, target) where target says which account it's for."""
         code, state, error = parse_pasted(pasted)
+        if require_state and not state:
+            raise AuthError('That sign-in address is incomplete. Tap "Sign in with Google" '
+                            'again.')
         if error:
             if error == 'access_denied':
                 raise AuthError('Sign-in was cancelled, or Drive access wasn\'t allowed. Try '
@@ -133,14 +138,18 @@ class SignIn(object):
                     raise AuthError('Tap "Sign in with Google" first.')
                 state = max(self.pending, key=lambda k: self.pending[k]['t'])
                 entry = self.pending[state]
-        status, body = _post(TOKEN_URL, {
-            'code': code,
-            'client_id': client_id,
-            'client_secret': client_secret,
-            'code_verifier': entry['verifier'],
-            'grant_type': 'authorization_code',
-            'redirect_uri': entry.get('redirect_uri', REDIRECT_URI),
-        })
+        try:
+            status, body = _post(TOKEN_URL, {
+                'code': code,
+                'client_id': client_id,
+                'client_secret': client_secret,
+                'code_verifier': entry['verifier'],
+                'grant_type': 'authorization_code',
+                'redirect_uri': entry.get('redirect_uri', REDIRECT_URI),
+            })
+        except OSError as e:
+            raise AuthError('Google can\'t be reached (%s). Check the internet connection and '
+                            'sign in again.' % e)
         if status != 200 or 'refresh_token' not in body:
             raise AuthError(_describe(body, status))
         with self.lock:

@@ -42,6 +42,16 @@ def _check_stopping():
         raise DriveError(0, 'stopping', 'the service is stopping')
 
 
+def _token(creds, force=False):
+    """An access token. Google being unreachable while the token needs renewing is a
+    network error like any other here, not a sign-in problem (creds.error stays clear,
+    so Kodi doesn't announce an expired sign-in)."""
+    try:
+        return creds.access_token(force=force)
+    except OSError as e:
+        raise DriveError(0, 'network', 'Google can\'t be reached: %s' % e)
+
+
 class _Pool(object):
     def __init__(self, size=6):
         self.lock = threading.Lock()
@@ -93,7 +103,7 @@ class Drive(object):
         delay = 1.0
         for attempt in range(retries + 1):
             _check_stopping()
-            token = self.creds.access_token(force=force)
+            token = _token(self.creds, force)
             force = False
             conn = self.pool.get()
             try:
@@ -206,7 +216,7 @@ class Drive(object):
         link = re.sub(r'=s\d+[^/]*$', '', link) + '=s%d-rj' % size
         force = False
         for attempt in range(2):
-            token = self.creds.access_token(force=force)
+            token = _token(self.creds, force)
             req = urllib.request.Request(link, headers={'Authorization': 'Bearer ' + token,
                                                         'User-Agent': USER_AGENT})
             try:
@@ -251,7 +261,7 @@ class Drive(object):
         refreshed = force = False
         for attempt in range(4):
             _check_stopping()
-            token = self.creds.access_token(force=force)
+            token = _token(self.creds, force)
             force = False
             headers = {'Authorization': 'Bearer ' + token, 'User-Agent': USER_AGENT}
             if range_header:

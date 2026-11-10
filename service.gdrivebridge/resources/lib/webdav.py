@@ -23,6 +23,7 @@ from .cache import NotFound, NotReady
 from .drive import DriveError
 
 CHUNK = 512 * 1024
+MAX_BODY = 1024 * 1024    # largest request body read (and ignored)
 CONVERTED_CACHE = 16       # converted photos kept in memory (slideshows revisit them)
 
 
@@ -97,12 +98,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # ---- helpers --------------------------------------------------------
     def _drain(self):
-        length = int(self.headers.get('Content-Length') or 0)
+        """Read and discard a request body (Kodi's are small or empty). Returns False after
+        answering one whose length is missing a real value or too large to bother with."""
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            length = -1
+        if length < 0 or length > MAX_BODY:
+            self.close_connection = True        # where the body ends is unknown or too far
+            self._send(400 if length < 0 else 413, 'Bad request\n')
+            return False
         while length > 0:
             chunk = self.rfile.read(min(length, 65536))
             if not chunk:
                 break
             length -= len(chunk)
+        return True
 
     def _segments(self):
         path = urllib.parse.urlsplit(self.path).path
@@ -164,7 +175,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # ---- methods --------------------------------------------------------
     def do_OPTIONS(self):
-        self._drain()
+        if not self._drain():
+            return
         self.send_response(200)
         self.send_header('DAV', '1')
         self.send_header('Allow', 'OPTIONS, GET, HEAD, PROPFIND')
@@ -173,8 +185,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_PROPFIND(self):
-        self._drain()
-        if not self._authorised():
+        if not self._drain() or not self._authorised():
             return
         segments = self._segments()
         entry = self._lookup(segments)
@@ -362,7 +373,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                                          ''.join(rows)))
 
     def _read_only(self):
-        self._drain()
+        if not self._drain():
+            return
         self._send(405, 'GDrive Bridge is read-only\n',
                    headers={'Allow': 'OPTIONS, GET, HEAD, PROPFIND'})
 

@@ -1,5 +1,4 @@
 """The background service: owns sign-in, the Drive cache, the WebDAV server and the setup page."""
-import json
 import os
 import threading
 import time
@@ -33,6 +32,7 @@ class Bridge(object):
         self.setup = None
         self.setup_error = ''
         self.setup_requested = 0
+        self.setup_timer = None
         self.wake = threading.Event()
         self.stopping = common.stopping
         self.lock = threading.RLock()
@@ -86,6 +86,8 @@ class Bridge(object):
         Kodi won't finish stopping us, or install an update, while one is still running."""
         self.stopping.set()
         self.wake.set()
+        if self.setup_timer:
+            self.setup_timer.cancel()
         for account in self.accounts.all():
             account.tree.prefetch_wake.set()
         self._stop_setup()
@@ -155,6 +157,8 @@ class Bridge(object):
     def _start_setup(self):
         if self.setup:
             return True
+        if self.stopping.is_set():
+            return False            # a server started now would outlive the stop
         try:
             self.setup = SetupServer(('0.0.0.0', self.settings['setup_port']), self)
         except OSError as e:
@@ -171,6 +175,8 @@ class Bridge(object):
 
     def _restart_setup(self):
         with self.lock:
+            if self.stopping.is_set():
+                return
             was_running = self.setup is not None
             self._stop_setup()
             if was_running or self.settings['setup_mode'] == common.SETUP_ALWAYS:
@@ -200,9 +206,9 @@ class Bridge(object):
                 self._start_webdav()
             if 'setup_port' in changed:
                 # let the page that saved this finish its response first
-                timer = threading.Timer(2.0, self._restart_setup)
-                timer.daemon = True
-                timer.start()
+                self.setup_timer = threading.Timer(2.0, self._restart_setup)
+                self.setup_timer.daemon = True
+                self.setup_timer.start()
             elif 'setup_mode' in changed:
                 if new['setup_mode'] == common.SETUP_ALWAYS:
                     self._start_setup()
@@ -239,11 +245,12 @@ class Bridge(object):
     def on_notification(self, sender, method, data):
         if sender != common.ADDON_ID:
             return
-        command = method.split('.')[-1]
-        try:
-            payload = json.loads(data) if data else {}
-        except ValueError:
-            payload = {}
+        # Only a nudge: what to do is in the menu's private request files. The notification's
+        # own data is ignored, since anyone who can reach Kodi can send one (common.take_requests).
+        for req in common.take_requests():
+            self._handle(req.get('command'), req.get('data') or {})
+
+    def _handle(self, command, payload):
         if command == 'setup':
             # the address can change while Kodi runs (a new DHCP lease); check it for each QR code
             self._refresh_address()
@@ -260,12 +267,13 @@ class Bridge(object):
             self.reset()
 
     # ---- account --------------------------------------------------------
-    def finish_signin(self, pasted):
+    def finish_signin(self, pasted, require_state=False):
         """Complete a sign-in for the account it was started for. Returns the email."""
         s = self.settings
         if not (s['client_id'] and s['client_secret']):
             raise AuthError('Enter the client ID and secret first.')
-        response, target = self.signin.finish(pasted, s['client_id'], s['client_secret'])
+        response, target = self.signin.finish(pasted, s['client_id'], s['client_secret'],
+                                             require_state)
         # adding an account before the main one is signed in just fills the main slot
         new = target == 'new' and self.accounts.main.creds.signed_in
         account = self.accounts.create() if new else (self.accounts.get(target)
@@ -302,7 +310,7 @@ class Bridge(object):
     def _tv_callback(self, query):
         """Runs on a WebDAV thread: finish the sign-in, then switch back to Kodi."""
         try:
-            email = self.finish_signin('?' + query)
+            email = self.finish_signin('?' + query, require_state=True)
         except AuthError as e:
             return False, str(e)
         self.main_actions.append('Notification(GDrive Bridge,Signed in as %s,6000,%s)'

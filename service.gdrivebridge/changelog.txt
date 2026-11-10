@@ -1,3 +1,21 @@
+v0.3.7 (2026-11-10)
+- The setup PIN and QR link no longer travel in a Kodi notification, which Kodi passes on
+  to every connected remote-control app. The menu leaves its requests (setup, sign out,
+  reset, refresh) in a private file instead, so a notification sent by anything else no
+  longer opens setup with its own PIN, signs out or resets.
+- When Google can't be reached just as the sign-in needs renewing (about once an hour),
+  Kodi gets a clean "not ready, try again shortly" instead of a dropped connection, and the
+  status no longer shows an internal error.
+- Wrong PINs lock out only the browser that typed them (5 tries per 5 minutes, 20 overall).
+  Opening setup in Kodi again lifts the lockout.
+- The sign-in return page only accepts the full address Google sends back.
+- Malformed requests to the setup page or the WebDAV server are refused.
+- Files written from two places at once can no longer be corrupted.
+- Changing the setup page port just before Kodi stops the add-on can no longer leave the
+  page running.
+- Older searches are let go of after 20, so memory doesn't grow with each search.
+- The Reset question no longer mentions a new PIN.
+
 v0.3.6.1 (2026-11-10)
 - What's new on the add-on's info page lists one version per line, newest first.
 

@@ -1,5 +1,6 @@
 """Shared helpers: settings, paths, logging, TLS and small file utilities."""
 import calendar
+import glob
 import json
 import os
 import secrets
@@ -147,6 +148,35 @@ def https_post(url, fields, timeout=30):
     finally:
         conn.close()
 
+
+# ---- requests from the menu ---------------------------------------------
+# The menu asks the service for things (open the setup page with this PIN, sign out, reset)
+# in a private file in the profile folder; its Kodi notification only says "look". The
+# notification can't carry the request itself: JSONRPC.NotifyAll reaches every connected
+# remote-control app (port 9090), and anyone who can reach Kodi can send one.
+REQUEST_MAX_AGE = 30        # seconds
+
+
+def write_request(command, data=None):
+    path = os.path.join(profile_dir(), 'request-%s.json' % secrets.token_hex(8))
+    write_json(path, {'command': command, 'data': data or {}, 't': time.time()}, private=True)
+
+
+def take_requests():
+    """The menu's recent requests, oldest first. Every request file is removed, stale ones
+    too, so a later notification can't set an old request off again."""
+    now = time.time()
+    found = []
+    for path in glob.glob(os.path.join(profile_dir(), 'request-*.json')):
+        req = read_json(path)
+        try:
+            os.remove(path)
+        except OSError:
+            continue                    # taken by another call meanwhile
+        t = req.get('t') if isinstance(req, dict) else None
+        if isinstance(t, (int, float)) and 0 <= now - t < REQUEST_MAX_AGE:
+            found.append(req)
+    return sorted(found, key=lambda r: r['t'])
 
 def log(msg, level=xbmc.LOGINFO):
     if stopping.is_set() and threading.current_thread() is not threading.main_thread():
@@ -325,13 +355,23 @@ def read_json(path, default=None):
 
 
 def write_json(path, data, private=False):
-    """Write atomically; private files are readable by the owner only."""
-    tmp = path + '.tmp'
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    """Write atomically; private files are readable by the owner only.
+
+    Each write has its own temporary file: the same file can be written from several
+    threads (status.json) or from the menu's own interpreter (pending.json) at once."""
+    tmp = '%s.%s.tmp' % (path, secrets.token_hex(4))
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     fd = os.open(tmp, flags, 0o600 if private else 0o644)
-    with os.fdopen(fd, 'w', encoding='utf-8') as f:
-        json.dump(data, f, separators=(',', ':'))
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, separators=(',', ':'))
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def parse_rfc3339(value):

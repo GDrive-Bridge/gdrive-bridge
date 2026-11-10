@@ -37,9 +37,13 @@ def service_status():
 
 
 def notify(command, data=None):
+    """Ask the service to do something. The request (with the setup PIN and QR link) goes in
+    a private file; the notification only wakes the service, because Kodi passes it on to
+    every connected remote-control app (see common.take_requests)."""
+    common.write_request(command, data)
     xbmc.executeJSONRPC(json.dumps({
         'jsonrpc': '2.0', 'id': 1, 'method': 'JSONRPC.NotifyAll',
-        'params': {'sender': common.ADDON_ID, 'message': command, 'data': data or {}}}))
+        'params': {'sender': common.ADDON_ID, 'message': 'request', 'data': {}}}))
 
 
 def wait_for(check, seconds):
@@ -274,8 +278,8 @@ def check_updates():
 def reset(st):
     if not xbmcgui.Dialog().yesno(TITLE, 'Reset GDrive Bridge? This signs out every account (also '
                                          'with Google), clears the cached Drive folders and puts '
-                                         'all settings back to their defaults, with a new PIN. '
-                                         'Your Google client ID and secret are kept.'):
+                                         'all settings back to their defaults. Your Google client '
+                                         'ID and secret are kept.'):
         return
     notify('reset')
     wait_for(lambda s: not s['signed_in'] and len(s.get('accounts', [])) <= 1, 10)

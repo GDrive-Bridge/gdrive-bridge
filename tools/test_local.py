@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 import urllib.parse
 import xml.etree.ElementTree as ET
 
@@ -476,7 +477,12 @@ def test_setup():
     real_detect = common.detect_lan_address
     common.detect_lan_address = lambda: '192.0.2.20'   # the device got a new address while running
     try:
-        b.on_notification(common.ADDON_ID, 'Other.setup', json.dumps({'token': 'kodi-qr', 'pin': '246810'}))
+        # a notification's own data is ignored: anyone who can reach Kodi can send one
+        b.on_notification(common.ADDON_ID, 'Other.setup', json.dumps({'token': 'spoof-qr',
+                                                                      'pin': '424242'}))
+        check(b.setup is None, 'a notification without the menu\'s request file does nothing')
+        common.write_request('setup', {'token': 'kodi-qr', 'pin': '246810'})
+        b.on_notification(common.ADDON_ID, 'Other.request', '')
         check(b.status()['setup_url'] == 'http://192.0.2.20:18766/',
               'the QR code uses the current address, looked up when setup is opened')
         check(common.get_setting('lan_address_detected') == '192.0.2.20'
@@ -681,6 +687,9 @@ def test_setup():
     s, h, body = request(port, 'GET', '/relay?' + urllib.parse.urlencode(
         {'state': q2['state'], 'code': 'thecode'}))
     check(b'expired' in body, 'relay callback can\'t be replayed')
+    sent.clear()
+    s, h, body = request(port, 'GET', '/relay?code=thecode')
+    check(b'incomplete' in body and not sent, 'relay callback without the sign-in state is refused')
     s, h, body = request(port, 'GET', '/relay?error=access_denied&state=x')
     check(b'cancelled' in body, 'cancelled sign-in explained')
     b.set_settings({'relay_url': ''})
@@ -723,6 +732,25 @@ def test_setup():
         s, _, _ = request(port, 'POST', '/login', {'Content-Type': 'application/x-www-form-urlencoded'},
                           'pin=99999999')
     check(s == 429, 'repeated wrong PINs lock the login')
+    check(b.setup.check_pin('000001', '192.0.2.77') is False,
+          '...for that browser only: another address can still try')
+    for i in range(30):
+        b.setup.check_pin('00000%d' % (i % 10), '192.0.2.%d' % (100 + i))
+    check(b.setup.check_pin('000002', '192.0.2.200') is None,
+          'guessing from many addresses is capped too')
+    b.setup.add_link('screen-3', '112233')
+    s, _, _ = request(port, 'POST', '/login', {'Content-Type': 'application/x-www-form-urlencoded'},
+                      'pin=112233')
+    check(s == 303, 'a new PIN from Kodi lifts the lockout (someone is at the TV)')
+    for length, code in (('-1', 400), ('abc', 400), ('70000', 413)):
+        c = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+        c.putrequest('POST', '/login')
+        c.putheader('Content-Length', length)
+        c.endheaders()
+        r = c.getresponse()
+        r.read()
+        c.close()
+        check(r.status == code, 'setup page: Content-Length %s answered %d' % (length, r.status))
 
     s, h, _ = post('/signout', {})
     check(not b.creds.signed_in and not os.path.exists(auth.token_path()), 'sign out removes the token')
@@ -866,7 +894,17 @@ def test_reset():
         b.accounts.save()
         sessions = os.path.join(common.profile_dir(), 'sessions.json')
         common.write_json(sessions, {'x': {'exp': 9e9}})
-        b.reset()
+        b.on_notification(common.ADDON_ID, 'Other.reset', '')
+        b.on_notification(common.ADDON_ID, 'Other.signout', '')
+        check(b.status()['signed_in'] and len(b.accounts.all()) == 2,
+              'a reset or sign-out notification without the menu\'s request file does nothing')
+        stale = os.path.join(common.profile_dir(), 'request-0123456789abcdef.json')
+        common.write_json(stale, {'command': 'reset', 'data': {}, 't': time.time() - 60}, private=True)
+        b.on_notification(common.ADDON_ID, 'Other.request', '')
+        check(b.status()['signed_in'] and not os.path.exists(stale),
+              'a stale request is ignored, and removed so it can\'t be set off later')
+        common.write_request('reset')
+        b.on_notification(common.ADDON_ID, 'Other.request', '')
         st = b.status()
         check(not st['signed_in'] and len(b.accounts.all()) == 1 and not os.path.exists(auth.token_path()),
               'reset signs out every account and removes the extra ones')
@@ -881,8 +919,110 @@ def test_reset():
         a.setSettingString('client_secret', '')
 
 
+def test_review_fixes():
+    print('\n== Review fixes (11-10) ==')
+    from resources.lib import bridge as bridge_mod
+    from resources.lib import drive as drive_mod
+    # Google unreachable while the access token needs renewing: a network error, not a
+    # crash, not a sign-in problem
+    tok = os.path.join(common.profile_dir(), 'token-offline.json')
+    common.write_json(tok, {'refresh_token': 'r', 'client_id': 'c', 'client_secret': 's'}, private=True)
+    real_https_post = common.https_post
+
+    def offline(url, fields, timeout=30):
+        raise OSError(7, 'No address associated with hostname')
+    common.https_post = offline
+    real_auth_post = auth._post             # earlier tests leave a fake in place
+    auth._post = lambda url, fields: offline(url, fields)
+    common.stopping.clear()                 # earlier tests end with a stop
+    server = None
+    try:
+        creds = auth.Credentials(tok)
+        d = drive_mod.Drive(creds)
+        try:
+            d.call('/about')
+            err = None
+        except Exception as e:
+            err = e
+        check(isinstance(err, DriveError) and err.reason == 'network' and creds.error is None,
+              'offline token renewal is a network DriveError, with no sign-in error: %r' % err)
+        tree = cache.DriveTree(d, creds, os.path.join(common.profile_dir(), 'cache-offline.json'))
+        server = webdav.WebDAVServer(('127.0.0.1', 0), accounts.Router(tree, d))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        port = server.server_address[1]
+        s, h, _ = request(port, 'PROPFIND', '/', {'Depth': '1'})
+        check(s == 503 and h.get('Retry-After'), 'WebDAV answers 503 while Google can\'t be reached')
+        signin = auth.SignIn()
+        signin.start('c', loopback_port=8765)
+        try:
+            signin.finish('thecode', 'c', 's')
+            err = None
+        except Exception as e:
+            err = e
+        check(isinstance(err, auth.AuthError) and 'reached' in str(err),
+              'finishing a sign-in offline explains it: %r' % err)
+        for length, code in (('x', 400), ('-5', 400), (str(5 * 1024 * 1024), 413)):
+            c = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+            c.putrequest('PROPFIND', '/')
+            c.putheader('Content-Length', length)
+            c.endheaders()
+            r = c.getresponse()
+            r.read()
+            c.close()
+            check(r.status == code, 'WebDAV: Content-Length %s answered %d' % (length, r.status))
+    finally:
+        common.https_post = real_https_post
+        auth._post = real_auth_post
+        if server:
+            server.close_all()
+
+    # the same file written from several threads at once stays valid
+    path = os.path.join(common.profile_dir(), 'race.json')
+    errors = []
+
+    def writer(n):
+        for i in range(100):
+            try:
+                common.write_json(path, {'n': n, 'i': i, 'pad': 'x' * 2000})
+            except Exception as e:
+                errors.append(e)
+    threads = [threading.Thread(target=writer, args=(n,)) for n in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    left = [f for f in os.listdir(common.profile_dir()) if f.startswith('race.json.')]
+    check(not errors and common.read_json(path) is not None and not left,
+          'concurrent writes of one file stay valid, no temporary files left: %r' % errors[:1])
+
+    # a setup-port change just before Kodi stops the service must not start the page afterwards
+    a = xbmcaddon.Addon(common.ADDON_ID)
+    a.setSettingInt('webdav_port', 18865)
+    a.setSettingInt('setup_port', 18866)
+    a.setSettingInt('setup_mode', common.SETUP_ALWAYS)
+    b = bridge_mod.Bridge(drive_factory=lambda creds: FakeDrive())
+    b.start()
+    a.setSettingInt('setup_port', 18867)
+    b.on_settings_changed()
+    b.stop()
+    time.sleep(2.5)
+    check(b.setup is None and not any(t.name == 'gdb-setup' for t in threading.enumerate()),
+          'a setup page restart pending at stop never happens')
+    a.setSettingInt('setup_mode', common.SETUP_ON_DEMAND)
+    a.setSettingInt('setup_port', 18766)
+
+    # searches kept in memory are capped
+    tree = cache.DriveTree(FakeDrive(), FakeCreds(), os.path.join(common.profile_dir(), 'cache-s.json'))
+    for i in range(cache.SEARCH_KEEP + 5):
+        tree._refresh(cache.SEARCH + 'term%d' % i)
+    kept = [k for k in tree.listings if k.startswith(cache.SEARCH)]
+    check(len(kept) == cache.SEARCH_KEEP and kept[-1] == cache.SEARCH + 'term%d' % (cache.SEARCH_KEEP + 4),
+          'only the newest %d searches are kept' % cache.SEARCH_KEEP)
+
+
 try:
-    for test in (test_shutdown, test_webdav, test_read_ahead, test_setup, test_reset):
+    for test in (test_shutdown, test_webdav, test_read_ahead, test_setup, test_reset,
+                 test_review_fixes):
         try:
             test()
         except Exception:               # a crash is a failure, not a silent skip

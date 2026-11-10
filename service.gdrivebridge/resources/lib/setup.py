@@ -20,7 +20,9 @@ from .cache import RESERVED
 
 SESSION_DAYS = 30
 LINK_TTL = 15 * 60
-MAX_PIN_TRIES = 5
+MAX_PIN_TRIES = 5          # wrong PINs per browser address within LOCKOUT
+MAX_PIN_TRIES_ALL = 20     # from all addresses together (keeps guessing bounded)
+MAX_FORM = 65536
 LOCKOUT = 5 * 60
 COOKIE = 'gdb_session'
 
@@ -182,6 +184,7 @@ class SetupServer(http.server.ThreadingHTTPServer):
             if pin:
                 self.pins = {k: v for k, v in self.pins.items() if v > now}
                 self.pins[pin] = now + LINK_TTL
+                self.failures = []      # someone at the TV asked for this PIN: let them in
 
     def use_link(self, token):
         with self.lock:
@@ -208,18 +211,19 @@ class SetupServer(http.server.ThreadingHTTPServer):
             if self.sessions.pop(sid, None):
                 common.write_json(self.sessions_path, self.sessions, private=True)
 
-    def check_pin(self, pin):
+    def check_pin(self, pin, client=''):
         with self.lock:
             now = time.time()
-            self.failures = [t for t in self.failures if now - t < LOCKOUT]
-            if len(self.failures) >= MAX_PIN_TRIES:
+            self.failures = [(t, ip) for t, ip in self.failures if now - t < LOCKOUT]
+            mine = sum(1 for _, ip in self.failures if ip == client)
+            if mine >= MAX_PIN_TRIES or len(self.failures) >= MAX_PIN_TRIES_ALL:
                 return None
             match = None
             for known, expiry in list(self.pins.items()):
                 if expiry > now and hmac.compare_digest(pin.encode(), known.encode()):
                     match = known
             if match is None:
-                self.failures.append(now)
+                self.failures.append((now, client))
                 return False
             del self.pins[match]        # works once
             return True
@@ -276,7 +280,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._send(303, '', headers=headers)
 
     def _form(self):
-        length = min(int(self.headers.get('Content-Length') or 0), 65536)
+        """The posted form, or None once a bad request has been answered. This runs before
+        anyone has logged in, so the length must be a real number within limits."""
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            length = -1
+        if length < 0:
+            self._send(400, 'Bad request')
+            return None
+        if length > MAX_FORM:
+            self._send(413, 'Too large')
+            return None
         raw = self.rfile.read(length).decode('utf-8', 'replace')
         return {k: v[0] for k, v in urllib.parse.parse_qs(raw, keep_blank_values=True).items()}
 
@@ -340,13 +355,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.server.last_activity = time.time()
         path = urllib.parse.urlsplit(self.path).path
         form = self._form()
+        if form is None:
+            return
         if path == '/login':
-            ok = self.server.check_pin(form.get('pin', '').strip())
+            ok = self.server.check_pin(form.get('pin', '').strip(), self.client_address[0])
             if ok:
                 sid = self.server.new_session()
                 self._redirect('/', cookie=self._cookie(sid, SESSION_DAYS * 86400))
             elif ok is None:
-                self._send(429, self._login_page('Too many wrong PINs. Wait 5 minutes.'))
+                self._send(429, self._login_page('Too many wrong PINs. In Kodi, open GDrive Bridge > '
+                                                 'Set up on phone or computer again for a new PIN '
+                                                 'and QR code, or wait 5 minutes.'))
             else:
                 self._send(403, self._login_page('Wrong or used PIN. Each PIN works once: open '
                                                  'GDrive Bridge > Set up on phone or computer in '
@@ -397,7 +416,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # Authorised by the unguessable state of a pending sign-in plus PKCE, not by
         # the session cookie (the relay hop may arrive without it).
         try:
-            email = self.server.bridge.finish_signin('?' + query)
+            email = self.server.bridge.finish_signin('?' + query, require_state=True)
             body = ('<div class="msg good">Signed in as <b>%s</b>.</div><section><h2>All done'
                     '</h2><p>Kodi can now use your Drive. You can close this tab.</p>'
                     '<p><a class="button" href="/">Open the setup page</a></p></section>'
