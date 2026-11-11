@@ -1,3 +1,15 @@
+v0.4.0 (2026-11-11)
+- Live slideshow (add-on menu): a slideshow of a Drive folder that starts again at a new photo
+  when one arrives in Drive. It waits while the slideshow is paused or a video is playing.
+- Live slideshows start at once and show photos at TV size: about 0.4 MB instead of a 4 MB
+  original, so each photo loads and decodes faster. Photos already shown are kept on the
+  device (up to 150 MB), so going back is instant.
+- New setting: Live slideshows show pictures only (on by default).
+- Add Google Drive to Music (add-on menu), and GDrive Bridge is listed under Music and Picture
+  add-ons.
+- A connection Kodi drops when it seeks, skips or stops is no longer logged as an error.
+- The add-on's description lists music, pictures, Starred and Live slideshow.
+
 v0.3.7 (2026-11-10)
 - The setup PIN and QR link no longer travel in a Kodi notification, which Kodi passes on
   to every connected remote-control app. The menu leaves its requests (setup, sign out,

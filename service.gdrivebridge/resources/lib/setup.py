@@ -468,7 +468,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         cur = self.server.bridge.settings
         values = {}
         for key in ('show_shared', 'show_drives', 'show_starred', 'hide_dot', 'hide_archives',
-                    'heic_as_jpeg', 'lan_share', 'debug'):
+                    'heic_as_jpeg', 'slideshow_pictures_only', 'lan_share', 'debug'):
             values[key] = form.get(key) == 'on'
         for key, lo, hi in (('poll_interval', 15, 3600), ('webdav_port', 1024, 65535),
                             ('setup_port', 1024, 65535)):
@@ -719,7 +719,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         return (
             '<section id="settings"><h2>Settings</h2><form method="post" action="/settings">%s'
-            '%s%s%s%s%s%s%s'
+            '%s%s%s%s%s%s%s%s'
             '<h2 style="margin-top:20px">Sharing</h2>%s'
             '<label for="lan_user">LAN user name</label><input id="lan_user" name="lan_user" '
             'type="text" value="%s"><label for="lan_password">LAN password</label>'
@@ -748,6 +748,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                      'top-level folder a content type: the library would list them twice.'),
                check('heic_as_jpeg', 'Show iPhone HEIC photos as JPEG',
                      'Kodi can\'t display HEIC; Google\'s JPEG version is shown instead.'),
+               check('slideshow_pictures_only', 'Live slideshows show pictures only',
+                     'Videos and music in the folder are skipped in slideshows started with '
+                     '<i>Live slideshow</i>. Off: Kodi\'s own Pictures setting decides.'),
                check('hide_dot', 'Hide files and folders starting with a dot',
                      'Hides things like <i>.git</i> that aren\'t media.'),
                check('hide_archives', 'Hide archives (.zip, .rar, .7z, .apk...)',

@@ -10,7 +10,8 @@ import threading
 
 from . import common
 from .auth import Credentials, NotSignedIn
-from .cache import DriveTree, NotFound, NotReady, RESERVED, TOP, clean_name
+from .cache import (DriveTree, NotFound, NotReady, PICTURES_ONLY, RESERVED, TOP, VIDEO_EXTS,
+                    clean_name)
 from .drive import Drive, FOLDER_MIME
 
 MAIN = 'main'
@@ -21,6 +22,28 @@ def _tag(entry, account):
     tagged = dict(entry)
     tagged['acct'] = account.id
     return tagged
+
+
+def _split_pictures(segments):
+    """('Slideshow/...' path?, the path without it)"""
+    if segments and segments[0] == PICTURES_ONLY:
+        return True, segments[1:]
+    return False, segments
+
+
+def _slideshow_entry(e):
+    """An entry seen through 'Slideshow/'. JPEG photos are served at TV size (webdav.py): a
+    camera original is 4-6 MB, slow to download and to decode on a TV box, and the slideshow
+    can't show the extra detail."""
+    return dict(e, pics=True, resize=not e['dir'] and not e.get('convert')
+                and e['mime'] == 'image/jpeg')
+
+
+def _pictures_only(entries):
+    """Folders and everything but video and music, for a slideshow that shows only pictures."""
+    return [_slideshow_entry(e) for e in entries
+            if e['dir'] or not (e['mime'].startswith(('video/', 'audio/'))
+                                or e['name'].lower().endswith(VIDEO_EXTS))]
 
 
 class Account(object):
@@ -49,10 +72,13 @@ class Router(object):
         self._drive = drive
 
     def resolve(self, segments):
-        return self.tree.resolve(segments)
+        pics, segments = _split_pictures(segments)
+        entry = self.tree.resolve(segments)
+        return _slideshow_entry(entry) if pics else entry
 
     def children(self, entry):
-        return self.tree.children(entry['id'])[0]
+        items = self.tree.children(entry['id'])[0]
+        return _pictures_only(items) if entry.get('pics') else items
 
     def drive(self, entry):
         return self._drive
@@ -144,6 +170,11 @@ class Accounts(object):
 
     # ---- WebDAV routing ---------------------------------------------------
     def resolve(self, segments):
+        pics, segments = _split_pictures(segments)
+        entry = self._resolve(segments)
+        return _slideshow_entry(entry) if pics else entry
+
+    def _resolve(self, segments):
         if not segments:
             if not any(a.creds.signed_in for a in self.all()):
                 raise NotReady('Not signed in')
@@ -161,6 +192,10 @@ class Accounts(object):
         return _tag(entry, account)
 
     def children(self, entry):
+        items = self._children(entry)
+        return _pictures_only(items) if entry.get('pics') else items
+
+    def _children(self, entry):
         if entry['id'] == ROOT:
             items = []
             if self.main.creds.signed_in:

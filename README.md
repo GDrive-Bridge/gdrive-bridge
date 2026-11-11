@@ -11,14 +11,15 @@ Drive like any network share, with seeking and subtitles.
 - **Search** (add-on menu → *Search Google Drive*): matching files and folders open as a folder
   you can browse and play.
 - **Several Google accounts**: each extra account is one more top-level folder.
-- **Videos and pictures**: add the same source under Pictures for photos and slideshows. iPhone
+- **Videos, music and pictures**: add the same source under Music or Pictures as well. iPhone
   **HEIC** photos (which Kodi can't display) are shown as JPEGs made by Google.
+- **Live slideshow**: a slideshow of a Drive folder that picks up new photos as they arrive.
 - **Kodi's library** reads `.nfo` files, posters/fanart and subtitles stored next to your videos,
   exactly as from any network share.
 - **Set up from any phone, tablet or computer**: the add-on shows a QR code (or an address and PIN)
   for its setup page, which walks you through everything, including creating your Google client.
 - **Your own Google client.** Sign-in goes straight between your device and Google; nothing passes
-  through anyone else's server.
+  through anyone else's server. See [Your own Google client](#your-own-google-client).
 - **Read-only** (`drive.readonly`). It never changes or deletes anything in your Drive.
 
 Tested on Kodi 21 (Omega) on an NVIDIA Shield (Android TV). It needs Kodi 20 or later.
@@ -64,6 +65,10 @@ the settings back to their defaults; your Google client ID and secret are kept.
    **WebDAV server (HTTP)**, server **127.0.0.1**, port **8765**. Pick a folder, name it, and set
    the content type for folders that hold films or TV shows.
 
+   Add the folders that hold your media, not the whole of *My Drive*. Kodi opens every folder
+   below a source when it scans it, and each folder it hasn't seen yet is a request to Google:
+   a Drive with thousands of folders takes hours to scan.
+
 ### Signing in every 7 days
 
 While your Google app is in *Testing*, Google ends the sign-in after 7 days. Kodi shows a
@@ -89,6 +94,29 @@ in with it (while your Google app is in *Testing*, add that account as a test us
 appears in Kodi as a folder named after the account, next to *My Drive*, with its own *My
 Drive*, *Shared with me*, *Shared drives* and *Starred*. Rename or remove it on the same page.
 
+## Live slideshow
+
+**Add-ons > GDrive Bridge > Live slideshow**: pick a Drive folder and choose whether to include
+its subfolders. When a new photo appears in that folder, the slideshow starts again at that photo
+at the next check for changes (every 60 seconds unless you change it).
+
+- It waits while the slideshow is paused or a video is playing, then restarts in the next gap.
+- Shuffle follows Kodi's own Pictures setting, and a restart starts a new round.
+- It watches the folder until you close the slideshow. It doesn't carry on after Kodi restarts.
+
+## Music
+
+Add the same source under **Music > Files > Add music** (the add-on menu has the steps), then
+browse and play. Each new part of a file has to be requested from Google, so a song takes several
+seconds to start.
+
+## Video quality
+
+Google Drive's API only serves the original file, not the lower-quality copies the Drive website
+streams. If a video stutters on your connection, give Kodi more memory for buffering (**Settings >
+Services > Caching** on Kodi 21, at the Advanced settings level) or keep a lower-bitrate copy of
+the video in your Drive.
+
 ## Settings
 
 All settings are on the setup page and in Kodi's add-on settings:
@@ -97,6 +125,7 @@ All settings are on the setup page and in Kodi's add-on settings:
 |---|---|---|
 | Show *Shared with me* / *Shared drives* / *Starred* | on | Top-level folders. Don't give the top level a content type: starred items would be scanned twice |
 | Show iPhone HEIC photos as JPEG | on | Uses Google's JPEG rendering (up to 3840 px) |
+| Live slideshows show pictures only | on | Skips the folder's videos and music. Off: Kodi's own Pictures setting decides |
 | Hide files and folders starting with a dot | on | `.git`… |
 | Hide archives (.zip, .rar, .7z, .apk…) | on | See below |
 | Check Drive for changes every | 60 s | |
@@ -114,6 +143,41 @@ a slow folder, all of Kodi's Python add-ons can freeze until Kodi gives up after
 GDrive Bridge answers from its cache wherever it can: it lists the subfolders of whatever Kodi
 opens in the background, serves older copies at once while refreshing them, and *Search* runs
 before its window opens. Only a folder that has never been listed makes Kodi wait.
+
+## Why WebDAV
+
+WebDAV is a file-sharing protocol that Kodi supports natively, alongside SMB and NFS. GDrive
+Bridge runs a small read-only WebDAV server inside Kodi, so Kodi sees your Drive as an ordinary
+network share:
+
+- Folders are real folders, and every file comes with its size and modification date, so
+  sorting by date or size works and Kodi's library scans Drive like a NAS.
+- It works everywhere Kodi accepts a source: Videos, Pictures, the file manager and the
+  library scanner. Nothing needs exporting first.
+- Playback goes through Kodi's own network player, with seeking (byte ranges) and the
+  subtitles, `.nfo` files and artwork stored next to each video.
+- Films and TV shows go in Kodi's own library: set a content type on the source and scan. New
+  files arrive with Kodi's normal library update, with no separate list of files to keep up to date.
+- Browsing doesn't wait on Google: folders come from a local copy kept current by Drive's change
+  feed.
+
+A plain `http://` source would only give Kodi a web page of links to read, without sizes or
+dates.
+
+**Connections.** Everything between GDrive Bridge and Google is HTTPS. Kodi itself reaches the
+WebDAV server on `127.0.0.1`, so that traffic never leaves the device. With **Share Drive with
+other devices on my network** turned on, other devices connect over plain HTTP, protected by a
+username and password. Only turn it on for a home network you trust.
+
+## Your own Google client
+
+Each person signs in with a Google client they create themselves (about 10 minutes, once). There
+is no shared app behind GDrive Bridge, so:
+
+- Nothing central can be blocked, rate-limited or retired for everyone at once.
+- Google's verification isn't needed for your own use, and the Drive usage limits are your own.
+- Your client secret is only ever exchanged between your Kodi device and Google. The optional
+  relay is a static page and has no server of its own.
 
 ## Privacy
 

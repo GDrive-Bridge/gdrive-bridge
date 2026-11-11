@@ -1,19 +1,17 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="service.gdrivebridge" name="GDrive Bridge" version="0.3.7" provider-name="GDrive Bridge">
+<addon id="service.gdrivebridge" name="GDrive Bridge" version="0.4.0" provider-name="GDrive Bridge">
   <requires>
     <import addon="xbmc.python" version="3.0.1"/>
     <import addon="script.module.certifi" version="2019.0.0"/>
   </requires>
   <extension point="xbmc.service" library="service.py"/>
   <extension point="xbmc.python.script" library="default.py">
-    <provides>executable video</provides>
+    <provides>executable video audio image</provides>
   </extension>
   <extension point="xbmc.addon.metadata">
     <summary lang="en_GB">Google Drive as a Kodi WebDAV source</summary>
-    <description lang="en_GB">GDrive Bridge serves your Google Drive (My Drive, Shared with me and Shared drives) to Kodi as a read-only WebDAV source on this device. Add dav://127.0.0.1:8765/ as a video source and Kodi browses, scans and plays it like any network share, with seeking and subtitles.
-
-Set it up from any phone, tablet or computer: open the add-on, scan the QR code and follow the steps. It signs in with your own Google Cloud client, so nothing passes through anyone else's server.</description>
-    <news>v0.3.7 (2026-11-10): Security and reliability fixes from a code review: the setup PIN is no longer sent where remote-control apps can see it; no crash when Google can't be reached.[CR]v0.3.6.1 (2026-11-10): What's new lists one version per line.[CR]v0.3.6 (2026-11-10): Settings show the detected network address (greyed out) above the override; the setup page has the override field too.[CR]v0.3.5 (2026-11-10): The setup PIN is new each time you open Set up on phone or computer and works once. No fixed PIN any more.[CR]v0.3.4 (2026-11-10): Menu: Check for updates and Reset GDrive Bridge. A copy installed from a zip shows how to turn on automatic updates.[CR]v0.3.3 (2026-11-09): Add-on updates install cleanly, including the ones Kodi installs at startup.[CR]v0.3.2 (2026-11-09): Stops cleanly when Kodi asks (faster Kodi exit).[CR]v0.3.1 (2026-11-09): The setup QR code uses the current address. Updates come from the GDrive Bridge repository.[CR]v0.3.0 (2026-11-09): The setup page opens only from the menu (can be set to always on). Needs Kodi 20 or later.[CR]v0.2.0 (2026-11-09): Several Google accounts, Starred, Search, iPhone HEIC photos as JPEG, read-ahead.[CR][CR]Full history: changelog.txt</news>
+    <description lang="en_GB">GDrive Bridge serves your Google Drive (My Drive, Shared with me, Shared drives and Starred) to Kodi as a read-only WebDAV source on this device. Add dav://127.0.0.1:8765/ as a video, music or pictures source and Kodi browses, scans and plays it like any network share. Live slideshow shows a Drive folder and picks up new photos as they arrive. Set it up from any phone, tablet or computer: open the add-on, scan the QR code and follow the steps. It signs in with your own Google Cloud client, so nothing passes through anyone else's server.</description>
+    <news>v0.4.0 (2026-11-11): Live slideshow that picks up new photos, with fast TV-size photos; Add Google Drive to Music; pictures-only setting for slideshows.[CR]v0.3.7 (2026-11-10): Security and reliability fixes from a code review: the setup PIN is no longer sent where remote-control apps can see it; no crash when Google can't be reached.[CR]v0.3.6.1 (2026-11-10): What's new lists one version per line.[CR]v0.3.6 (2026-11-10): Settings show the detected network address (greyed out) above the override; the setup page has the override field too.[CR]v0.3.5 (2026-11-10): The setup PIN is new each time you open Set up on phone or computer and works once. No fixed PIN any more.[CR]v0.3.4 (2026-11-10): Menu: Check for updates and Reset GDrive Bridge. A copy installed from a zip shows how to turn on automatic updates.[CR]v0.3.3 (2026-11-09): Add-on updates install cleanly, including the ones Kodi installs at startup.[CR]v0.3.2 (2026-11-09): Stops cleanly when Kodi asks (faster Kodi exit).[CR]v0.3.1 (2026-11-09): The setup QR code uses the current address. Updates come from the GDrive Bridge repository.[CR]v0.3.0 (2026-11-09): The setup page opens only from the menu (can be set to always on). Needs Kodi 20 or later.[CR]v0.2.0 (2026-11-09): Several Google accounts, Starred, Search, iPhone HEIC photos as JPEG, read-ahead.[CR][CR]Full history: changelog.txt</news>
     <platform>all</platform>
     <website>https://gdrive-bridge.github.io/gdrive-bridge/</website>
     <source>https://github.com/GDrive-Bridge/gdrive-bridge</source>

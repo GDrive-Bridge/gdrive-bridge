@@ -19,7 +19,12 @@ SEARCH_TTL = 10 * 60
 SEARCH_KEEP = 20          # searches kept in memory; older ones are fetched again if reopened
 FETCH_LOCKS_MAX = 256     # idle per-folder fetch locks are dropped beyond this
 # Top-level names an extra account's folder can never take
-RESERVED = ('My Drive', 'Shared with me', 'Shared drives', 'Starred', 'Search')
+RESERVED = ('My Drive', 'Shared with me', 'Shared drives', 'Starred', 'Search', 'Slideshow')
+# Hidden top-level folder: the whole tree again, without videos and music (for slideshows).
+# Never listed, like 'Search'.
+PICTURES_ONLY = 'Slideshow'
+VIDEO_EXTS = ('.mkv', '.mp4', '.m4v', '.avi', '.mov', '.wmv', '.mpg', '.mpeg', '.ts', '.m2ts',
+              '.webm', '.3gp', '.flv', '.vob', '.iso')
 # Image formats Kodi can't decode; served as Google's JPEG rendering instead
 CONVERT_EXTS = ('.heic', '.heif')
 CONVERT_MIMES = ('image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence')

@@ -2,6 +2,7 @@
 import os
 import threading
 import time
+import urllib.parse
 
 import xbmc
 
@@ -11,12 +12,14 @@ from .auth import AuthError, NotSignedIn, SignIn
 from .cache import NotReady
 from .drive import Drive, DriveError
 from .setup import SetupServer
+from .slideshow import LiveSlideshow, SlideshowError
 from .webdav import WebDAVServer
 
 SETUP_IDLE = 15 * 60
 STOP_TIMEOUT = 1.5      # seconds stop() waits for threads; Kodi kills scripts after 5,
                         # counted from its request and while Kodi is busy (startup)
 BOOT_DELAY = 15         # seconds before the first sync / read-ahead (see common.quiet_until)
+LIVE_RECHECK = 5        # seconds between slideshow checks while new pictures wait for a gap
 
 
 class Bridge(object):
@@ -41,6 +44,9 @@ class Bridge(object):
         self._published = None
         self.main_actions = []          # Kodi calls to make from the service's main thread
         self.address = common.lan_address()
+        self.live = None                # the live slideshow being watched (slideshow.py)
+        self.live_request = None
+        self.live_status = None
 
     # the main account (the only one before multiple accounts existed)
     @property
@@ -265,6 +271,10 @@ class Bridge(object):
             self.sign_out(payload.get('account', MAIN))
         elif command == 'reset':
             self.reset()
+        elif command == 'slideshow':
+            # started from the sync loop: listing the folder can take a while
+            self.live_request = payload
+            self.wake.set()
 
     # ---- account --------------------------------------------------------
     def finish_signin(self, pasted, require_state=False):
@@ -386,34 +396,101 @@ class Bridge(object):
     def _sync_loop(self):
         if not common.wait_until_quiet():
             return
+        woken = True
+        last_sync = 0
         while not self.stopping.is_set():
-            for account in self.accounts.all():
-                if self.stopping.is_set():
-                    break
-                if not account.creds.signed_in:
-                    continue
-                tree = account.tree
+            if self.live_request is not None:
+                # before the Drive check, which can take a while: someone is waiting
                 try:
-                    count = tree.sync()
-                    tree.warm()             # top folders cached before Kodi asks
-                    tree.last_error = ''
-                    if count:
-                        common.debug('%s: applied %d Drive changes' % (account.id, count))
-                except (NotReady, NotSignedIn):
-                    pass
-                except (DriveError, AuthError) as e:
-                    tree.last_error = str(e)
-                    common.log('sync failed (%s): %s' % (account.id, e))
+                    self._live_step()
                 except Exception as e:      # never let the loop die
-                    tree.last_error = 'internal error: %s' % e
-                    common.log('sync crashed (%s): %r' % (account.id, e), xbmc.LOGERROR)
-                tree.save()
+                    common.log('live slideshow failed: %r' % e, xbmc.LOGERROR)
+            interval = max(15, self.settings['poll_interval'])
+            if woken or time.time() - last_sync >= interval:
+                self._sync_accounts()
+                last_sync = time.time()
             if self.stopping.is_set():
                 break
+            try:
+                self._live_step()
+            except Exception as e:          # never let the loop die
+                common.log('live slideshow failed: %r' % e, xbmc.LOGERROR)
             self._check_expiry()
             self.publish()
-            self.wake.wait(max(15, self.settings['poll_interval']))
+            wait = interval - (time.time() - last_sync)
+            if self.live is not None and self.live.pending:
+                # new pictures held back by a video or a pause: restart in the next gap,
+                # without asking Google again in between
+                wait = min(wait, LIVE_RECHECK)
+            woken = self.wake.wait(max(0.5, wait))
             self.wake.clear()
+
+    def _sync_accounts(self):
+        for account in self.accounts.all():
+            if self.stopping.is_set():
+                break
+            if not account.creds.signed_in:
+                continue
+            tree = account.tree
+            try:
+                count = tree.sync()
+                tree.warm()             # top folders cached before Kodi asks
+                tree.last_error = ''
+                if count:
+                    common.debug('%s: applied %d Drive changes' % (account.id, count))
+            except (NotReady, NotSignedIn):
+                pass
+            except (DriveError, AuthError) as e:
+                tree.last_error = str(e)
+                common.log('sync failed (%s): %s' % (account.id, e))
+            except Exception as e:      # never let the loop die
+                tree.last_error = 'internal error: %s' % e
+                common.log('sync crashed (%s): %r' % (account.id, e), xbmc.LOGERROR)
+            tree.save()
+
+    # ---- live slideshow -------------------------------------------------
+    def _live_step(self):
+        """Start a requested live slideshow, or look for new pictures in the running one."""
+        req, self.live_request = self.live_request, None
+        if req:
+            segments = [urllib.parse.unquote(p) for p in req.get('path', '').split('/') if p]
+            live = LiveSlideshow('dav://127.0.0.1:%d/' % self.settings['webdav_port'],
+                                 segments, bool(req.get('recursive')),
+                                 self.settings['slideshow_pictures_only'])
+            status = {'req': req.get('id'), 'ok': False, 'folder': live.label}
+            try:
+                builtin = live.start(self.accounts, self.stopping)
+            except SlideshowError as e:
+                status['message'] = str(e)
+            except (NotReady, NotSignedIn, DriveError, AuthError) as e:
+                status['message'] = 'Google Drive can\'t be read right now: %s' % (
+                    str(e) or 'not signed in')
+            else:
+                self.live = live
+                self.main_actions.append(builtin)
+                status.update(ok=True, pictures=len(live.known))
+                common.log('live slideshow of %s (%d pictures)' % (live.label, len(live.known)))
+            self.live_status = status
+            self.publish()
+            return
+        live = self.live
+        if live is None:
+            return
+        try:
+            action, builtin = live.check(self.accounts, stopping=self.stopping)
+        except SlideshowError:
+            action, builtin = 'stop', None        # the folder is gone
+        except (NotReady, NotSignedIn, DriveError, AuthError) as e:
+            common.debug('live slideshow check skipped: %s' % e)
+            return
+        if action == 'stop':
+            common.log('live slideshow of %s ended' % live.label)
+            self.live = None
+            self.live_status = dict(self.live_status or {}, ended=True)
+            self.publish()
+        elif action == 'restart':
+            common.log('live slideshow: new pictures in %s' % live.label)
+            self.main_actions.append(builtin)
 
     # ---- status ---------------------------------------------------------
     def status(self):
@@ -436,6 +513,7 @@ class Bridge(object):
             'setup_error': self.setup_error,
             'has_client': bool(s['client_id'] and s['client_secret']),
             'accounts': [self._account_status(a) for a in self.accounts.all()],
+            'slideshow': self.live_status,
         }
 
     def _account_status(self, account):

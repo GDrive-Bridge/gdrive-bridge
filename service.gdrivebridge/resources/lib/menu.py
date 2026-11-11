@@ -9,11 +9,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 
 import xbmc
 import xbmcgui
 
 from . import common, qr
+from .slideshow import PICTURE_EXTS
 
 TITLE = 'GDrive Bridge'
 REPO_ID = 'repository.gdrivebridge'
@@ -216,6 +218,79 @@ def search(st):
     xbmc.executebuiltin('ActivateWindow(Videos,"%s%s",return)' % (st['webdav'], rel))
 
 
+def _webdav_port(st):
+    return st['webdav'].rstrip('/').rsplit(':', 1)[1]
+
+
+def list_folder(st, rel):
+    """(subfolder names, picture count) of a WebDAV folder, from the service."""
+    req = urllib.request.Request('http://127.0.0.1:%s/%s' % (_webdav_port(st), rel),
+                                 method='PROPFIND', headers={'Depth': '1'})
+    with urllib.request.urlopen(req, timeout=90) as resp:
+        root = ET.fromstring(resp.read())
+    folders, pictures = [], 0
+    for r in root.findall('{DAV:}response')[1:]:            # the first is the folder itself
+        href = r.findtext('{DAV:}href') or ''
+        name = urllib.parse.unquote(href.rstrip('/').rsplit('/', 1)[-1])
+        if r.find('.//{DAV:}collection') is not None:
+            folders.append(name)
+        elif name.lower().endswith(PICTURE_EXTS):
+            pictures += 1
+    return folders, pictures
+
+
+def live_slideshow(st):
+    """Pick a Drive folder and start a slideshow of it that picks up new pictures."""
+    if not st['signed_in']:
+        xbmcgui.Dialog().ok(TITLE, 'Sign in first: choose Set up on phone or computer.')
+        return
+    path = []
+    while True:
+        rel = ''.join(urllib.parse.quote(p, safe='') + '/' for p in path)
+        try:
+            folders, pictures = list_folder(st, rel)
+        except (urllib.error.URLError, OSError, ValueError, ET.ParseError) as e:
+            xbmcgui.Dialog().ok(TITLE, 'Google Drive can\'t be read right now: %s' % e)
+            return
+        options = []
+        if path:
+            options.append(('[B]Show this folder[/B] (%d picture%s here)'
+                            % (pictures, '' if pictures == 1 else 's'), 'use'))
+            options.append(('..', 'up'))
+        options += [(name, name) for name in folders]
+        heading = 'Live slideshow: %s' % ('/'.join(path) or 'choose a folder')
+        choice = xbmcgui.Dialog().select(heading, [label for label, _ in options])
+        if choice < 0:
+            return
+        action = options[choice][1]
+        if action == 'use':
+            break
+        if action == 'up':
+            path.pop()
+        else:
+            path.append(action)
+    recursive = bool(folders) and xbmcgui.Dialog().yesno(
+        TITLE, 'Include the pictures in its subfolders too?')
+    req_id = secrets.token_hex(4)
+    notify('slideshow', {'path': rel, 'recursive': recursive, 'id': req_id})
+    busy = xbmcgui.DialogProgressBG()
+    busy.create(TITLE, 'Reading %s...' % path[-1])
+    try:
+        st = wait_for(lambda s: (s.get('slideshow') or {}).get('req') == req_id, 180)
+    finally:
+        busy.close()
+    result = (st or {}).get('slideshow') or {}
+    if result.get('req') != req_id:
+        xbmcgui.Dialog().ok(TITLE, 'The slideshow didn\'t start: GDrive Bridge took too long '
+                                   'to read the folder. Try again in a moment.')
+    elif not result.get('ok'):
+        xbmcgui.Dialog().ok(TITLE, result.get('message') or 'The slideshow didn\'t start.')
+    else:
+        xbmcgui.Dialog().notification(TITLE, 'New pictures show up within %d seconds'
+                                      % max(15, common.get_settings()['poll_interval']),
+                                      time=6000)
+
+
 def add_pictures_help(st):
     xbmcgui.Dialog().textviewer('Add Google Drive to Pictures', '[CR]'.join([
         '1. Go to [B]Pictures[/B] and choose [B]Add pictures...[/B]',
@@ -231,6 +306,21 @@ def add_pictures_help(st):
     ]))
     if xbmcgui.Dialog().yesno(TITLE, 'Open the Pictures sources now?'):
         xbmc.executebuiltin('ActivateWindow(Pictures,sources://pictures/,return)')
+
+
+def add_music_help(st):
+    xbmcgui.Dialog().textviewer('Add Google Drive to Music', '[CR]'.join([
+        '1. Go to [B]Music > Files > Add music...[/B]',
+        '2. Choose [B]Browse[/B], then [B]Add network location...[/B]',
+        '   Protocol: [B]WebDAV server (HTTP)[/B], Server address: [B]127.0.0.1[/B], '
+        'Port: [B]%s[/B]. Leave the rest empty and choose OK.' % _webdav_port(st),
+        '   (Or type [B]%s[/B] as the path.)' % st['webdav'],
+        '3. Open it, pick your music folder, choose OK and name it.',
+        '',
+        'Browse it and play.',
+    ]))
+    if xbmcgui.Dialog().yesno(TITLE, 'Open the Music sources now?'):
+        xbmc.executebuiltin('ActivateWindow(Music,sources://music/,return)')
 
 
 def add_source_help(st):
@@ -309,7 +399,9 @@ def menu():
                ('Refresh Drive folders', lambda: (notify('refresh'), xbmcgui.Dialog().notification(
                    TITLE, 'Re-reading Drive folders'))),
                ('Search Google Drive', lambda: search(service_status() or st)),
+               ('Live slideshow', lambda: live_slideshow(service_status() or st)),
                ('Add Google Drive to Videos', lambda: add_source_help(st)),
+               ('Add Google Drive to Music', lambda: add_music_help(st)),
                ('Add Google Drive to Pictures', lambda: add_pictures_help(st))]
     if st['signed_in']:
         entries.append(('Sign out', lambda: sign_out(st)))
@@ -339,6 +431,10 @@ def main():
         st = service_status()
         if st:
             search(st)
+    elif arg == 'slideshow':
+        st = service_status()
+        if st:
+            live_slideshow(st)
     elif arg == 'stopscan':
         # UpdateLibrary(video) cancels a running video scan instead of starting one
         if xbmc.getCondVisibility('Library.IsScanningVideo'):

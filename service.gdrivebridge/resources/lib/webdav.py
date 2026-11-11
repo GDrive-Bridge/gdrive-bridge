@@ -7,12 +7,15 @@ folder, so a library update can't mistake a not-ready server for an empty source
 import base64
 import collections
 import email.utils
+import hashlib
+import os
 import re
 import hmac
 import html
 import http.client
 import http.server
 import socket
+import sys
 import threading
 import urllib.parse
 from xml.sax.saxutils import escape
@@ -25,6 +28,10 @@ from .drive import DriveError
 CHUNK = 512 * 1024
 MAX_BODY = 1024 * 1024    # largest request body read (and ignored)
 CONVERTED_CACHE = 16       # converted photos kept in memory (slideshows revisit them)
+CONVERTED_DISK = 150 * 1024 * 1024   # and on disk, newest first, up to this many bytes
+CONVERT_SIZE = 3840        # longest side of photos Kodi can't decode (HEIC)
+RESIZE_SIZE = 2560         # longest side of slideshow photos: above Kodi's 1080p screen,
+                           # with room for pan and zoom
 
 
 def quote(segment):
@@ -39,8 +46,9 @@ class WebDAVServer(http.server.ThreadingHTTPServer):
         self.on_callback = on_callback      # finishes a sign-in made in this device's browser
         self.router = router                # accounts.Accounts (or accounts.Router for one tree)
         self.credentials = credentials      # (user, password) for LAN clients, or None
-        self.converted = collections.OrderedDict()   # (acct, file id) -> JPEG bytes, LRU
+        self.converted = collections.OrderedDict()   # (acct, file id, size, mtime) -> JPEG, LRU
         self.converted_lock = threading.Lock()
+        self.converting = {}                # key -> lock: Kodi asks for a photo twice at once
         self.conns = set()
         self.conns_lock = threading.Lock()
         http.server.ThreadingHTTPServer.__init__(self, address, Handler)
@@ -50,19 +58,88 @@ class WebDAVServer(http.server.ThreadingHTTPServer):
             self.conns.add(request)
         http.server.ThreadingHTTPServer.process_request(self, request, client_address)
 
-    def converted_bytes(self, entry):
-        """Google's JPEG rendering of an image Kodi can't decode (e.g. HEIC), cached."""
-        key = (entry.get('acct'), entry['id'])
+    def converted_bytes(self, entry, size=CONVERT_SIZE):
+        """Google's JPEG rendering of an image (HEIC, or a photo at TV size), cached in
+        memory and on disk. Kodi fetches each slideshow photo twice (the second time on its
+        screen thread, which then waits), and slideshows go back and loop."""
+        key = (entry.get('acct'), entry['id'], size, entry.get('mtime'))
         with self.converted_lock:
             if key in self.converted:
                 self.converted.move_to_end(key)
                 return self.converted[key]
-        data, _ = self.router.drive(entry).thumbnail(entry['id'])
+            lock = self.converting.setdefault(key, threading.Lock())
+        try:
+            with lock:
+                return self._convert(entry, size, key)
+        finally:
+            with self.converted_lock:
+                if not lock.locked():
+                    self.converting.pop(key, None)
+
+    def has_converted(self, entry, size):
+        key = (entry.get('acct'), entry['id'], size, entry.get('mtime'))
+        with self.converted_lock:
+            if key in self.converted:
+                return True
+        return os.path.exists(self._disk_path(key))
+
+    def _convert(self, entry, size, key):
+        with self.converted_lock:            # another request may have just made it
+            if key in self.converted:
+                self.converted.move_to_end(key)
+                return self.converted[key]
+        path = self._disk_path(key)
+        data = None
+        try:
+            with open(path, 'rb') as f:
+                data = f.read()
+            os.utime(path)                   # newest first when the disk cache is trimmed
+        except OSError:
+            pass
+        if not data:
+            data, _ = self.router.drive(entry).thumbnail(entry['id'], size)
+            self._disk_store(path, data)
         with self.converted_lock:
             self.converted[key] = data
             while len(self.converted) > CONVERTED_CACHE:
                 self.converted.popitem(last=False)
         return data
+
+    @staticmethod
+    def _disk_dir():
+        return os.path.join(common.profile_dir(), 'photos')
+
+    def _disk_path(self, key):
+        name = hashlib.sha1(repr(key).encode('utf-8')).hexdigest() + '.jpg'
+        return os.path.join(self._disk_dir(), name)
+
+    def _disk_store(self, path, data):
+        folder = os.path.dirname(path)
+        try:
+            os.makedirs(folder, exist_ok=True)
+            tmp = '%s.%d.tmp' % (path, threading.get_ident())
+            with open(tmp, 'wb') as f:
+                f.write(data)
+            os.replace(tmp, path)
+            files = []
+            for name in os.listdir(folder):
+                p = os.path.join(folder, name)
+                st = os.stat(p)
+                files.append((st.st_mtime, st.st_size, p))
+            total = sum(f[1] for f in files)
+            for _, size, p in sorted(files):
+                if total <= CONVERTED_DISK:
+                    break
+                os.remove(p)
+                total -= size
+        except OSError as e:
+            common.debug('photo cache: %s' % e)
+
+    def handle_error(self, request, client_address):
+        # Kodi drops connections whenever it seeks, skips or stops: not worth a traceback
+        if isinstance(sys.exc_info()[1], (ConnectionError, socket.timeout)):
+            return
+        http.server.ThreadingHTTPServer.handle_error(self, request, client_address)
 
     def shutdown_request(self, request):
         with self.conns_lock:
@@ -252,9 +329,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._send(200, self._index(segments, children), ctype='text/html; charset=utf-8')
             return
         last_modified = email.utils.formatdate(entry['mtime'], usegmt=True) if entry['mtime'] else None
-        if entry.get('convert'):
-            self._send_converted(entry, last_modified, head)
-            return
+        # A HEAD for a slideshow photo not fetched yet gets the original's details at once:
+        # Kodi checks files on its screen thread and must not wait on Google for that.
+        if entry.get('convert') or (entry.get('resize') and not (
+                head and not self.server.has_converted(entry, RESIZE_SIZE))):
+            if self._send_converted(entry, last_modified, head):
+                return
         if head:
             self.send_response(200)
             self.send_header('Content-Type', entry['mime'] or 'application/octet-stream')
@@ -281,15 +361,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._send(200, body, ctype='text/html; charset=utf-8')
 
     def _send_converted(self, entry, last_modified, head):
+        """Returns False when a TV-size copy isn't available, so the original is sent."""
+        resize = not entry.get('convert')
         try:
-            data = self.server.converted_bytes(entry)
+            data = self.server.converted_bytes(entry, RESIZE_SIZE if resize else CONVERT_SIZE)
         except (AuthError, NotSignedIn) as e:
             self._unavailable(str(e) or 'not signed in')
-            return
+            return True
         except DriveError as e:
+            if resize:
+                common.debug('no TV-size copy of %s, sending the original: %s' % (entry['name'], e))
+                return False
             common.log('preview of %s failed: %s' % (entry['name'], e))
             self._send(404 if e.status == 404 else 502, 'No preview from Drive: %s\n' % e)
-            return
+            return True
         status, start, end = 200, 0, len(data) - 1
         m = re.match(r'bytes=(\d*)-(\d*)$', (self.headers.get('Range') or '').strip())
         if m and (m.group(1) or m.group(2)):
@@ -300,7 +385,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 start = max(0, len(data) - int(m.group(2)))
             if start > end:
                 self._send(416, '', headers={'Content-Range': 'bytes */%d' % len(data)})
-                return
+                return True
             status = 206
         self.send_response(status)
         self.send_header('Content-Type', 'image/jpeg')
@@ -313,6 +398,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         if not head:
             self.wfile.write(data[start:end + 1])
+        return True
 
     def _stream(self, entry, last_modified):
         rng = self.headers.get('Range')

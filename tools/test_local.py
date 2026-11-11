@@ -133,7 +133,7 @@ class FakeDrive(object):
                 if term.lower() in f['name'].lower() and f['id'] != 'ROOT'][:limit]
 
     def thumbnail(self, fid, size=3840):
-        self.calls.append(('thumbnail', fid))
+        self.calls.append(('thumbnail', fid, size))
         return b'\xff\xd8\xff\xe0' + b'J' * 2000 + b'\xff\xd9', 'image/jpeg'
 
     def start_page_token(self):
@@ -1020,9 +1020,197 @@ def test_review_fixes():
           'only the newest %d searches are kept' % cache.SEARCH_KEEP)
 
 
+def test_live_slideshow():
+    print('\n== Live slideshow ==')
+    from resources.lib import slideshow
+    common.stopping.clear()
+    fd = FakeDrive()
+    t = '2024-05-01T10:00:00.000Z'
+
+    def add(fid, name, parents, mime='image/jpeg', mtime=t):
+        fd.files[fid] = dict(id=fid, name=name, parents=parents, mimeType=mime, modifiedTime=mtime,
+                             createdTime=t, size='3', _content=b'img')
+    fd.files['photos'] = dict(id='photos', name='Photos, 2024 (100%)', parents=['ROOT'],
+                              mimeType=FOLDER_MIME, modifiedTime=t, createdTime=t)
+    fd.files['trip'] = dict(id='trip', name='Trip', parents=['photos'], mimeType=FOLDER_MIME,
+                            modifiedTime=t, createdTime=t)
+    add('p1', 'Beach.jpg', ['photos'])
+    add('p2', 'Sunset.PNG', ['photos'], 'image/png')
+    add('p3', 'IMG_9.HEIC', ['photos'], 'image/heic')
+    add('p4', '.hidden.jpg', ['photos'])
+    add('p5', 'clip.mp4', ['photos'], 'video/mp4')
+    add('p6', 'Hill.jpg', ['trip'])
+    tree = cache.DriveTree(fd, FakeCreds(), os.path.join(common.profile_dir(), 'cache-live.json'))
+    router = accounts.Router(tree, fd)
+    segs = ['My Drive', 'Photos, 2024 (100%)']
+    flat = slideshow.walk(router, segs, False)
+    enc = 'My%20Drive/Photos%2C%202024%20%28100%25%29/'
+    check(sorted(flat) == [enc + 'Beach.jpg', enc + 'IMG_9.HEIC.jpg', enc + 'Sunset.PNG'],
+          'walk: pictures only, hidden files skipped, HEIC as JPEG, Kodi\'s encoding: %r' % sorted(flat))
+    deep = slideshow.walk(router, segs, True)
+    check(enc + 'Trip/Hill.jpg' in deep and len(deep) == 4, 'walk: subfolders when recursive')
+    # the paths are exactly the ones Kodi builds from the WebDAV listing
+    server = webdav.WebDAVServer(('127.0.0.1', 0), router)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        port = server.server_address[1]
+        base = 'dav://127.0.0.1:%d/' % port
+        _, entries = propfind(port, '/' + enc)
+        kodi = {p for _, p, d, _ in kodi_items(base, base + enc, entries) if not d}
+        check({base + p for p in flat} <= kodi, 'walk paths match Kodi\'s item paths')
+    finally:
+        server.close_all()
+    stop = threading.Event()
+    stop.set()
+    try:
+        slideshow.walk(router, segs, True, stop)
+        err = None
+    except Exception as e:
+        err = e
+    check(isinstance(err, cache.NotReady), 'walk gives up when the service stops')
+
+    live = slideshow.LiveSlideshow('dav://127.0.0.1:8765/', segs, True)
+    b = live.start(router)
+    check(b == 'SlideShow(dav://127.0.0.1:8765/%s,recursive)' % enc, 'start builtin: %s' % b)
+    state = {'players': [{'playerid': 2, 'type': 'picture'}], 'speed': 1,
+             'first': live.base + enc + 'Beach.jpg'}
+
+    def call(method, params=None):
+        if method == 'Player.GetActivePlayers':
+            return state['players']
+        if method == 'Playlist.GetItems':
+            return {'items': [{'file': state['first']}]}
+        if method == 'XBMC.GetInfoBooleans':
+            return {'Slideshow.IsPaused': state['speed'] == 0}
+    check(live.check(router, call) == (None, None), 'no new pictures: nothing to do')
+    tree.sync()                                     # takes the first change token
+    later = '2024-06-01T10:00:00.000Z'
+    for fid, name, parent, mtime in (('n1', 'New A.jpg', 'photos', t), ('n2', 'New B.png', 'trip', later)):
+        add(fid, name, [parent], mtime=mtime)
+        fd.changes_q.append({'changeType': 'file', 'fileId': fid, 'file': fd._pub(fd.files[fid])})
+    tree.sync()
+    state['players'] = [{'playerid': 1, 'type': 'video'}]
+    check(live.check(router, call) == (None, None) and not live.pending,
+          'a video playing alone: no restart, no stop, folder not read')
+    live.started -= slideshow.START_GRACE + 1
+    state['players'] = [{'playerid': 1, 'type': 'video'}, {'playerid': 2, 'type': 'picture'}]
+    check(live.check(router, call) == (None, None) and live.pending,
+          'a video in the slideshow: new pictures found, the restart waits')
+    state['players'] = [{'playerid': 2, 'type': 'picture'}]
+    state['speed'] = 0
+    check(live.check(router, call) == (None, None), 'paused on a picture: the restart waits')
+    state['speed'] = 1
+    action, b = live.check(router, call)
+    check(action == 'restart' and b.endswith(',beginslide=dav://127.0.0.1:8765/%sTrip/New%%20B.png)' % enc),
+          'new pictures restart it at the newest one: %s' % b)
+    check(live.check(router, call) == (None, None), 'the same pictures never restart it twice')
+    state['first'] = live.base + enc + 'clip.mp4'
+    check(live.check(router, call) == (None, None), 'a video first in the slideshow is still ours')
+    state['first'] = 'dav://127.0.0.1:8765/My%20Drive/Elsewhere/x.jpg'
+    check(live.check(router, call)[0] == 'stop', 'another slideshow ends the watch')
+    state['first'] = live.base + enc + 'Beach.jpg'
+    state['players'] = []
+    check(live.check(router, call) == (None, None), 'no slideshow yet just after a start')
+    live.started -= slideshow.START_GRACE + 1
+    check(live.check(router, call)[0] == 'stop', 'a closed slideshow ends the watch')
+    empty = slideshow.LiveSlideshow('dav://127.0.0.1:8765/', ['My Drive', 'Movies', 'Extras'], False)
+    try:
+        empty.start(router)
+        err = None
+    except slideshow.SlideshowError as e:
+        err = e
+    check(err is not None and 'no pictures' in str(err), 'a folder without pictures is refused')
+    # pictures only: the hidden 'Slideshow' copy of the tree leaves out videos and music
+    add('v1', 'Holiday.mp4', ['photos'], 'video/mp4')
+    add('v2', 'Song.mp3', ['photos'], 'audio/mpeg')
+    add('v3', 'Odd.mkv', ['photos'], 'application/octet-stream')
+    tree.listings.clear()
+    tree.entries.clear()
+    plain = {n for n, _ in [(e['name'], 0) for e in router.children(router.resolve(segs))]}
+    pics_entry = router.resolve(['Slideshow'] + segs)
+    pics = {e['name'] for e in router.children(pics_entry)}
+    check({'Holiday.mp4', 'Song.mp3', 'Odd.mkv'} <= plain and not pics & {'Holiday.mp4', 'Song.mp3', 'Odd.mkv'}
+          and {'Beach.jpg', 'Trip'} <= pics, 'Slideshow/ leaves out videos and music: %r' % sorted(pics))
+    top = router.resolve(['Slideshow'])
+    sub = [e for e in router.children(top) if e['name'] == 'My Drive']
+    check(sub and sub[0].get('pics') and router.resolve(['Slideshow', 'My Drive', 'Photos, 2024 (100%)', 'Beach.jpg'])['id'] == 'p1',
+          'Slideshow/ resolves files and keeps filtering below')
+    live = slideshow.LiveSlideshow('dav://127.0.0.1:8765/', segs, False, pictures_only=True)
+    b = live.start(router)
+    check(b == 'SlideShow(dav://127.0.0.1:8765/Slideshow/%s)' % enc and all(p.startswith('Slideshow/') for p in live.known)
+          and live.label == 'My Drive/Photos, 2024 (100%)', 'a pictures-only live slideshow reads Slideshow/: %s' % b)
+    check('Slideshow' in cache.RESERVED, 'no account folder can be called Slideshow')
+    # Live slideshows get JPEG photos at TV size, fetched once and kept (memory and disk)
+    add('big', 'Big.jpg', ['photos'])
+    fd.files['big']['_content'] = b'ORIGINAL' * 1000
+    fd.files['big']['size'] = str(8000)
+    tree.listings.clear(); tree.entries.clear()
+    srv = webdav.WebDAVServer(('127.0.0.1', 0), router)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        port = srv.server_address[1]
+        p = '/Slideshow/' + enc + 'Big.jpg'
+        fd.calls[:] = []
+        s, h, b = request(port, 'HEAD', p)
+        check(s == 200 and h.get('Content-Length') == '8000' and not [c for c in fd.calls if c[0] == 'thumbnail'],
+              'HEAD of an unfetched slideshow photo answers at once with the original size')
+        s1, _, b1 = request(port, 'GET', p)
+        s2, _, b2 = request(port, 'GET', p, {'Range': 'bytes=0-'})
+        thumbs = [c for c in fd.calls if c[0] == 'thumbnail']
+        check(s1 == 200 and b1.startswith(b'\xff\xd8') and b1 == b2 and len(thumbs) == 1,
+              'a slideshow JPEG is served at TV size and fetched from Google once: %r' % thumbs)
+        check(thumbs and thumbs[0][-1] == webdav.RESIZE_SIZE if len(thumbs[0]) > 2 else True,
+              'TV size requested')
+        disk = os.listdir(os.path.join(common.profile_dir(), 'photos'))
+        check(len(disk) >= 1, 'the TV-size copy is kept on disk too')
+        srv.converted.clear()
+        request(port, 'GET', p)
+        check(len([c for c in fd.calls if c[0] == 'thumbnail']) == 1, 'after a restart it comes from disk, not Google')
+        s, _, b = request(port, 'GET', '/' + enc + 'Big.jpg')
+        check(s == 200 and b == b'ORIGINAL' * 1000, 'outside slideshows the original is sent')
+        real_thumb = fd.thumbnail
+        def no_thumb(fid, size=3840):
+            raise DriveError(404, 'noThumbnail', 'none')
+        fd.thumbnail = no_thumb
+        s, _, b = request(port, 'GET', '/Slideshow/' + enc + 'Beach.jpg')
+        check(s == 200 and b == b'img', 'no TV-size copy from Google: the original is sent')
+        fd.thumbnail = real_thumb
+    finally:
+        srv.close_all()
+    # a connection Kodi drops mid-request is not logged as an error
+    import io
+    srv = webdav.WebDAVServer(('127.0.0.1', 0), router)
+    real_stderr, sys.stderr = sys.stderr, io.StringIO()
+    try:
+        try:
+            raise ConnectionResetError(104, 'Connection reset by peer')
+        except ConnectionResetError:
+            srv.handle_error(None, ('127.0.0.1', 1))
+        quiet = sys.stderr.getvalue() == ''
+    finally:
+        sys.stderr = real_stderr
+        srv.server_close()
+    check(quiet, 'a dropped connection is not logged as an error')
+
+    # through the service: menu request -> sync loop -> builtin on the main thread
+    b = bridge.Bridge(drive_factory=lambda creds: fd)
+    b.accounts.main.tree = tree
+    b.accounts.main.creds = FakeCreds()
+    b._handle('slideshow', {'path': enc, 'recursive': False, 'id': 'r1'})
+    b._live_step()
+    check(b.live is not None and b.main_actions and b.main_actions[-1].startswith('SlideShow(')
+          and (b.status()['slideshow'] or {}).get('ok') and b.status()['slideshow']['req'] == 'r1',
+          'a menu request starts the slideshow from the service')
+    b._handle('slideshow', {'path': 'My%20Drive/Movies/Extras/', 'id': 'r2'})
+    b._live_step()
+    st = b.status()['slideshow']
+    check(st['req'] == 'r2' and not st['ok'] and 'no pictures' in st['message'],
+          'an empty folder is reported to the menu: %r' % st)
+
+
 try:
     for test in (test_shutdown, test_webdav, test_read_ahead, test_setup, test_reset,
-                 test_review_fixes):
+                 test_review_fixes, test_live_slideshow):
         try:
             test()
         except Exception:               # a crash is a failure, not a silent skip

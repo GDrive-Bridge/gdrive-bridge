@@ -157,6 +157,14 @@ msgctxt "#30057"
 msgid "Kodi can't display HEIC photos; Google's JPEG version is shown instead."
 msgstr ""
 
+msgctxt "#30058"
+msgid "Live slideshows show pictures only"
+msgstr ""
+
+msgctxt "#30059"
+msgid "Videos and music in the folder are skipped in slideshows started with Live slideshow. Off: Kodi's own Pictures setting decides."
+msgstr ""
+
 msgctxt "#30060"
 msgid "Detected network address"
 msgstr ""
