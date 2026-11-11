@@ -61,9 +61,13 @@ the settings back to their defaults; your Google client ID and secret are kept.
 
    With a **Desktop app** client instead, your phone ends on a page that "can't be reached"
    (`127.0.0.1`); copy its address back into the setup page.
-5. In Kodi: **Videos > Files > Add videos > Browse > Add network location**: protocol
-   **WebDAV server (HTTP)**, server **127.0.0.1**, port **8765**. Pick a folder, name it, and set
-   the content type for folders that hold films or TV shows.
+5. Back in Kodi, open the add-on and choose **Add Google Drive to Kodi**: pick Videos, Music or
+   Pictures, choose a Drive folder and name it. Add as many as you like, then let it quit Kodi
+   and open Kodi again (Kodi reads its sources when it starts). For films or TV shows, set the
+   content type afterwards: highlight the source, open its menu and choose **Set content**.
+
+   To do it by hand instead: **Videos > Files > Add videos > Browse > Add network location**,
+   protocol **WebDAV server (HTTP)**, server **127.0.0.1**, port **8765**.
 
    Add the folders that hold your media, not the whole of *My Drive*. Kodi opens every folder
    below a source when it scans it, and each folder it hasn't seen yet is a request to Google:
@@ -106,8 +110,7 @@ at the next check for changes (every 60 seconds unless you change it).
 
 ## Music
 
-Add the same source under **Music > Files > Add music** (the add-on menu has the steps), then
-browse and play. Each new part of a file has to be requested from Google, so a song takes several
+Add a music folder with **Add Google Drive to Kodi** in the add-on menu, then browse and play. Each new part of a file has to be requested from Google, so a song takes several
 seconds to start.
 
 ## Video quality

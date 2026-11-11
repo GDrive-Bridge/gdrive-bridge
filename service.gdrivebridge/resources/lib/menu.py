@@ -13,8 +13,9 @@ import xml.etree.ElementTree as ET
 
 import xbmc
 import xbmcgui
+import xbmcvfs
 
-from . import common, qr
+from . import common, qr, sources
 from .slideshow import PICTURE_EXTS
 
 TITLE = 'GDrive Bridge'
@@ -239,11 +240,10 @@ def list_folder(st, rel):
     return folders, pictures
 
 
-def live_slideshow(st):
-    """Pick a Drive folder and start a slideshow of it that picks up new pictures."""
-    if not st['signed_in']:
-        xbmcgui.Dialog().ok(TITLE, 'Sign in first: choose Set up on phone or computer.')
-        return
+def choose_folder(st, title, use_label):
+    """Browse the Drive folder by folder. `use_label(path, folders, pictures)` gives the
+    'use this folder' entry for a level, or None where there is none. Returns
+    (path segments, subfolder names) or None if cancelled."""
     path = []
     while True:
         rel = ''.join(urllib.parse.quote(p, safe='') + '/' for p in path)
@@ -251,24 +251,39 @@ def live_slideshow(st):
             folders, pictures = list_folder(st, rel)
         except (urllib.error.URLError, OSError, ValueError, ET.ParseError) as e:
             xbmcgui.Dialog().ok(TITLE, 'Google Drive can\'t be read right now: %s' % e)
-            return
+            return None
         options = []
+        label = use_label(path, folders, pictures)
+        if label:
+            options.append((label, 'use'))
         if path:
-            options.append(('[B]Show this folder[/B] (%d picture%s here)'
-                            % (pictures, '' if pictures == 1 else 's'), 'use'))
             options.append(('..', 'up'))
         options += [(name, name) for name in folders]
-        heading = 'Live slideshow: %s' % ('/'.join(path) or 'choose a folder')
+        heading = '%s: %s' % (title, '/'.join(path) or 'choose a folder')
         choice = xbmcgui.Dialog().select(heading, [label for label, _ in options])
         if choice < 0:
-            return
+            return None
         action = options[choice][1]
         if action == 'use':
-            break
+            return path, folders
         if action == 'up':
             path.pop()
         else:
             path.append(action)
+
+
+def live_slideshow(st):
+    """Pick a Drive folder and start a slideshow of it that picks up new pictures."""
+    if not st['signed_in']:
+        xbmcgui.Dialog().ok(TITLE, 'Sign in first: choose Set up on phone or computer.')
+        return
+    picked = choose_folder(st, 'Live slideshow', lambda path, folders, pictures: (
+        '[B]Show this folder[/B] (%d picture%s here)' % (pictures, '' if pictures == 1 else 's')
+        if path else None))
+    if picked is None:
+        return
+    path, folders = picked
+    rel = ''.join(urllib.parse.quote(p, safe='') + '/' for p in path)
     recursive = bool(folders) and xbmcgui.Dialog().yesno(
         TITLE, 'Include the pictures in its subfolders too?')
     req_id = secrets.token_hex(4)
@@ -289,6 +304,68 @@ def live_slideshow(st):
         xbmcgui.Dialog().notification(TITLE, 'New pictures show up within %d seconds'
                                       % max(15, common.get_settings()['poll_interval']),
                                       time=6000)
+
+
+SOURCE_KINDS = [('Videos', 'video'), ('Music', 'music'), ('Pictures', 'pictures')]
+
+
+def add_to_kodi(st):
+    """Add Drive folders as Kodi sources (sources.xml), then restart Kodi to load them."""
+    if not st['signed_in']:
+        xbmcgui.Dialog().ok(TITLE, 'Sign in first: choose Set up on phone or computer.')
+        return
+    path = xbmcvfs.translatePath('special://profile/sources.xml')
+    base = 'dav://127.0.0.1:%s/' % _webdav_port(st)
+    added = []
+    while True:
+        labels = [label for label, _ in SOURCE_KINDS] + ['Show the steps to do it by hand']
+        kind = xbmcgui.Dialog().select('Add Google Drive to...', labels)
+        if kind < 0:
+            break
+        if kind == len(SOURCE_KINDS):
+            manual = xbmcgui.Dialog().select('Steps for...', [l for l, _ in SOURCE_KINDS])
+            if manual >= 0:
+                (add_source_help, add_music_help, add_pictures_help)[manual](st)
+            return
+        label, section = SOURCE_KINDS[kind]
+        picked = choose_folder(st, 'Add to %s' % label, lambda p, folders, pictures: (
+            '[B]Use this folder[/B]' if p else '[B]Use the whole Drive[/B]'))
+        if picked is None:
+            continue
+        segments = picked[0]
+        if section != 'pictures' and len(segments) <= 1 and not xbmcgui.Dialog().yesno(
+                TITLE, 'Scanning %s into the library means Kodi opens every folder in it, '
+                'which can take hours on a big Drive. Add it anyway? (Choosing the folder '
+                'that holds your %s is quicker.)' % (
+                    '/'.join(segments) or 'the whole Drive', label.lower())):
+            continue
+        url = base + ''.join(urllib.parse.quote(s, safe='') + '/' for s in segments)
+        name = xbmcgui.Dialog().input('Name for this source', segments[-1] if segments
+                                      else 'Google Drive').strip()
+        if not name:
+            continue
+        try:
+            used = sources.add(path, section, name, url)
+        except (OSError, ValueError, ET.ParseError) as e:
+            xbmcgui.Dialog().ok(TITLE, 'Kodi\'s sources file couldn\'t be changed: %s' % e)
+            return
+        if used is None:
+            xbmcgui.Dialog().ok(TITLE, 'That folder is already one of your %s sources.' % label)
+        else:
+            added.append('%s: %s' % (label, used))
+        if not xbmcgui.Dialog().yesno(TITLE, 'Add another folder?'):
+            break
+    if not added:
+        return
+    android = xbmc.getCondVisibility('System.Platform.Android')
+    lines = ['Added ' + ', '.join(added) + '.', '',
+             'Kodi reads its sources when it starts, so it needs restarting. Until then, '
+             'don\'t add or change sources by hand, or Kodi will save over these.', '',
+             'For films or TV shows, set the content type afterwards: highlight the source, '
+             'open its menu and choose Set content.']
+    question = 'Quit Kodi now? (Then open it again.)' if android else 'Restart Kodi now?'
+    if xbmcgui.Dialog().yesno(TITLE, '[CR]'.join(lines) + '[CR][CR]' + question):
+        xbmc.executebuiltin('Quit' if android else 'RestartApp')
 
 
 def add_pictures_help(st):
@@ -400,9 +477,7 @@ def menu():
                    TITLE, 'Re-reading Drive folders'))),
                ('Search Google Drive', lambda: search(service_status() or st)),
                ('Live slideshow', lambda: live_slideshow(service_status() or st)),
-               ('Add Google Drive to Videos', lambda: add_source_help(st)),
-               ('Add Google Drive to Music', lambda: add_music_help(st)),
-               ('Add Google Drive to Pictures', lambda: add_pictures_help(st))]
+               ('Add Google Drive to Kodi', lambda: add_to_kodi(st))]
     if st['signed_in']:
         entries.append(('Sign out', lambda: sign_out(st)))
     if has_repository():

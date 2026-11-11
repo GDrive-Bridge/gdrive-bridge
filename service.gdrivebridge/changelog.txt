@@ -1,3 +1,11 @@
+v0.4.1 (2026-11-11)
+- Add Google Drive to Kodi (menu): pick Videos, Music or Pictures, choose a Drive folder and
+  name it, and it becomes a Kodi source. Several can be added in one go; Kodi then restarts
+  to load them (on Android: quit and open Kodi again). Existing sources are never changed,
+  the previous sources file is kept as a backup, and the same folder isn't added twice. The
+  step-by-step guides are still there for adding a source by hand.
+- One menu entry replaces Add Google Drive to Videos / Music / Pictures.
+
 v0.4.0 (2026-11-11)
 - Live slideshow (add-on menu): a slideshow of a Drive folder that starts again at a new photo
   when one arrives in Drive. It waits while the slideshow is paused or a video is playing.

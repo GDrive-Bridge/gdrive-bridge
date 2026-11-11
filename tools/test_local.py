@@ -1208,9 +1208,48 @@ def test_live_slideshow():
           'an empty folder is reported to the menu: %r' % st)
 
 
+def test_sources():
+    print('\n== Adding Kodi sources ==')
+    from resources.lib import sources
+    path = os.path.join(TMP, 'sources.xml')
+    with open(path, 'w') as f:
+        f.write('<sources>\n    <programs><default pathversion="1"></default></programs>\n'
+                '    <video><default pathversion="1"></default><source><name>NAS</name>'
+                '<path pathversion="1">smb://nas/films/</path><allowsharing>true</allowsharing>'
+                '</source></video>\n</sources>\n')
+    used = sources.add(path, 'video', 'Movies', 'dav://127.0.0.1:8765/My%20Drive/Movies/')
+    r = ET.parse(path).getroot()
+    vids = [(s.findtext('name'), s.findtext('path')) for s in r.find('video').findall('source')]
+    check(used == 'Movies' and ('NAS', 'smb://nas/films/') in vids
+          and ('Movies', 'dav://127.0.0.1:8765/My%20Drive/Movies/') in vids,
+          'a source is added and existing ones are kept: %r' % vids)
+    check(os.path.exists(path + sources.BACKUP_SUFFIX), 'the previous file is kept as a backup')
+    check(all(r.find(n) is not None for n in sources.SECTIONS), 'missing sections are created')
+    check(sources.add(path, 'video', 'Again', 'dav://127.0.0.1:8765/My Drive/Movies') is None,
+          'the same folder is not added twice (encoding and slash ignored)')
+    check(sources.add(path, 'video', 'NAS', 'dav://127.0.0.1:8765/My%20Drive/TV/') == 'NAS (2)',
+          'a name already used gets a number')
+    check(sources.add(path, 'pictures', 'Movies', 'dav://127.0.0.1:8765/My%20Drive/Movies/') == 'Movies',
+          'the same folder can be a source in another section')
+    fresh = os.path.join(TMP, 'none', 'sources.xml')
+    os.makedirs(os.path.dirname(fresh), exist_ok=True)
+    check(sources.add(fresh, 'music', '', 'dav://127.0.0.1:8765/') == 'Google Drive'
+          and ET.parse(fresh).getroot().find('music').find('source') is not None,
+          'a missing sources file is created; an empty name becomes Google Drive')
+    with open(path, 'w') as f:
+        f.write('<sources><video>')
+    try:
+        sources.add(path, 'video', 'X', 'dav://127.0.0.1:8765/x/')
+        err = None
+    except Exception as e:
+        err = e
+    check(isinstance(err, ET.ParseError) and open(path).read() == '<sources><video>',
+          'a broken sources file is reported and left untouched')
+
+
 try:
     for test in (test_shutdown, test_webdav, test_read_ahead, test_setup, test_reset,
-                 test_review_fixes, test_live_slideshow):
+                 test_review_fixes, test_live_slideshow, test_sources):
         try:
             test()
         except Exception:               # a crash is a failure, not a silent skip
