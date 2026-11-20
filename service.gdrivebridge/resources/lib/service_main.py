@@ -59,6 +59,9 @@ def run():
         # Kodi can stop a service as it starts (an add-on update at startup): start nothing
         common.log('stop requested before start')
     else:
+        stale = common.remove_stale_tmp()
+        if stale:
+            common.log('removed %d leftover temporary file(s)' % stale)
         bridge.start()
         common.log('started')
     while not monitor.abortRequested():

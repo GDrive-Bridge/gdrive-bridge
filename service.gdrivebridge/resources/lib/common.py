@@ -375,6 +375,22 @@ def write_json(path, data, private=False):
         raise
 
 
+def remove_stale_tmp(max_age=3600):
+    """Temporary files left by writes that never finished (Kodi closed or the box lost power
+    mid-write; a cache.json of a few MB each time). Only ones older than max_age go, so a
+    write in progress is never touched. Returns how many were removed."""
+    now, removed = time.time(), 0
+    for folder in (profile_dir(), os.path.join(profile_dir(), 'photos')):
+        for path in glob.glob(os.path.join(folder, '*.tmp')):
+            try:
+                if now - os.path.getmtime(path) > max_age:
+                    os.remove(path)
+                    removed += 1
+            except OSError:
+                pass                    # gone already, or in use
+    return removed
+
+
 def parse_rfc3339(value):
     """Drive timestamp ('2024-01-02T03:04:05.678Z') to epoch seconds."""
     if not value:

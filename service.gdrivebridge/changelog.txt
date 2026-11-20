@@ -1,3 +1,8 @@
+v0.4.2 (2026-11-20)
+- Temporary files left behind when a save was interrupted (Kodi closed or the box lost power
+  mid-write; a few MB each) are removed when the service starts. Only files more than an hour
+  old are touched, so a save in progress is never affected.
+
 v0.4.1 (2026-11-11)
 - Add Google Drive to Kodi (menu): pick Videos, Music or Pictures, choose a Drive folder and
   name it, and it becomes a Kodi source. Several can be added in one go; Kodi then restarts
