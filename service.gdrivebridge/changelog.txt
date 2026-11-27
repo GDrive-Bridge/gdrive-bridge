@@ -1,3 +1,18 @@
+v0.4.3 (2026-11-27)
+- Security: the Drive source is only open without a password to Kodi itself on this device.
+  A web page opened in a browser on the same device could otherwise have read your Drive.
+  Update recommended.
+- A short outage of Google's sign-in service no longer shows a "Sign-in expired" message.
+- Set up on phone or computer: no needless 5-second wait when the setup page is already open,
+  and no QR code for a service that isn't running.
+- Kodi stopping or updating the add-on no longer waits for a photo download in progress.
+- A folder with a shortcut to a deleted or unshared file no longer makes Kodi wait on Google.
+- A file added to Drive just as Kodi opens its folder no longer stays hidden.
+- Checking iPhone (HEIC) photos before they open no longer makes Kodi wait on Google.
+- Finishing a sign-in for an account that was removed meanwhile can no longer replace the main
+  account; a sign-in started with a different Google client is reported clearly.
+- Background folder refreshes are no longer occasionally dropped.
+
 v0.4.2 (2026-11-20)
 - Temporary files left behind when a save was interrupted (Kodi closed or the box lost power
   mid-write; a few MB each) are removed when the service starts. Only files more than an hour

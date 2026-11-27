@@ -11,6 +11,7 @@ import hashlib
 import os
 import re
 import hmac
+import ipaddress
 import html
 import http.client
 import http.server
@@ -164,6 +165,29 @@ def is_loopback(addr):
     return addr.startswith('127.') or addr in ('::1', '::ffff:127.0.0.1')
 
 
+LOOPBACK_NAMES = ('127.0.0.1', 'localhost', '::1')
+
+
+def loopback_host(host):
+    """Whether a request's Host header names this device's loopback address. A page in a browser
+    on this device can rebind its own domain to 127.0.0.1 (DNS rebinding): its requests then come
+    from loopback but still carry that domain in Host, so loopback trust also needs this.
+    A request with no Host header (HTTP/1.0 tools) counts as local."""
+    host = (host or '').strip().lower()
+    if not host:
+        return True
+    if host.startswith('['):                       # '[::1]:8765'
+        name = host[1:].split(']', 1)[0]
+    else:
+        name = host.rsplit(':', 1)[0] if host.count(':') == 1 else host
+    if name in LOOPBACK_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback    # 127.x.y.z, not '127.0.0.1.evil.com'
+    except ValueError:
+        return False
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
     server_version = 'GDriveBridge'
@@ -208,8 +232,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.command != 'HEAD':
             self.wfile.write(body)
 
+    def _local(self):
+        """From this device AND addressed to its loopback name (see loopback_host)."""
+        return is_loopback(self.client_address[0]) and loopback_host(self.headers.get('Host'))
+
     def _authorised(self):
-        if is_loopback(self.client_address[0]):
+        if self._local():
             return True
         creds = self.server.credentials
         if not creds:
@@ -331,8 +359,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         last_modified = email.utils.formatdate(entry['mtime'], usegmt=True) if entry['mtime'] else None
         # A HEAD for a slideshow photo not fetched yet gets the original's details at once:
         # Kodi checks files on its screen thread and must not wait on Google for that.
-        if entry.get('convert') or (entry.get('resize') and not (
-                head and not self.server.has_converted(entry, RESIZE_SIZE))):
+        # (HEIC shown as JPEG too: Google's rendering takes two requests, ~2 s per photo.)
+        if (entry.get('convert') and not (head and not self.server.has_converted(entry, CONVERT_SIZE))) \
+                or (entry.get('resize') and not (
+                    head and not self.server.has_converted(entry, RESIZE_SIZE))):
             if self._send_converted(entry, last_modified, head):
                 return
         if head:
@@ -348,7 +378,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _callback(self):
         """Google's redirect after signing in with a browser on this device (loopback only)."""
-        if not is_loopback(self.client_address[0]) or not self.server.on_callback:
+        if not self._local() or not self.server.on_callback:
             self._send(404, 'Not found\n')
             return
         ok, message = self.server.on_callback(urllib.parse.urlsplit(self.path).query)

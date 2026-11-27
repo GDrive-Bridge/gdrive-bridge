@@ -1247,9 +1247,109 @@ def test_sources():
           'a broken sources file is reported and left untouched')
 
 
+def test_review_fixes_2():
+    print('\n== Review fixes (11-27) ==')
+    # 1. DNS rebinding: loopback trust needs a loopback Host header too
+    for host, want in (('127.0.0.1:8765', True), ('localhost:8765', True), ('[::1]:8765', True),
+                       (None, True), ('attacker.example:8765', False), ('192.0.2.10:8765', False),
+                       ('127.0.0.1.attacker.example', False)):
+        check(webdav.loopback_host(host) == want, 'Host %r counts as loopback: %s' % (host, want))
+    fd, creds = FakeDrive(), FakeCreds()
+    tree = cache.DriveTree(fd, creds, path=os.path.join(TMP, 'rf2.json'))
+    srv = webdav.WebDAVServer(('127.0.0.1', 0), accounts.Router(tree, fd))
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        st, _, _ = request(port, 'PROPFIND', '/', {'Depth': '1', 'Host': 'attacker.example:%d' % port})
+        check(st in (401, 403), 'a rebound domain on loopback is refused (%d)' % st)
+        st, _, _ = request(port, 'PROPFIND', '/', {'Depth': '1'})
+        check(st == 207, 'Kodi on 127.0.0.1 still needs no password (%d)' % st)
+        st, _, _ = request(port, 'GET', '/callback?code=x&state=y', {'Host': 'attacker.example'})
+        check(st == 404, 'the sign-in callback ignores a rebound domain (%d)' % st)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+    # 2. a 503 from Google's token service is a network error, not an expired sign-in
+    tok = os.path.join(common.profile_dir(), 'token-503.json')
+    common.write_json(tok, {'refresh_token': 'r', 'client_id': 'c', 'client_secret': 's'}, private=True)
+    real_post = auth._post
+    try:
+        auth._post = lambda url, fields: (503, {})
+        c = auth.Credentials(tok)
+        try:
+            c.access_token(force=True)
+            raised = None
+        except Exception as e:
+            raised = e
+        check(isinstance(raised, OSError) and c.error is None,
+              'token service 503: OSError, no sign-in error (%r)' % raised)
+        auth._post = lambda url, fields: (400, {'error': 'invalid_grant'})
+        try:
+            c.access_token(force=True)
+            raised = None
+        except Exception as e:
+            raised = e
+        check(isinstance(raised, auth.AuthError) and raised.revoked and c.error,
+              'invalid_grant is still a revoked sign-in')
+    finally:
+        auth._post = real_post
+
+    # 5. an unavailable shortcut target is not asked about on every rebuild
+    asked = []
+
+    def missing(fid):
+        asked.append(fid)
+        raise DriveError(404, 'notFound', 'gone')
+    tree.drive = type('D', (), {'get': staticmethod(missing)})()
+    check(tree._target('gone1') is None and tree._target('gone1') is None and asked == ['gone1'],
+          'a missing shortcut target is looked up once, then remembered (%s)' % asked)
+    tree._apply([{'fileId': 'nothing-here', 'removed': True}])
+    check(tree.failed_targets == {}, 'a change sync forgets unavailable targets (may be shared again)')
+    tree.drive = fd
+
+    # 6. children() doesn't keep a result built while a sync changed things
+    tree2 = cache.DriveTree(fd, creds, path=os.path.join(TMP, 'rf2b.json'))
+    tree2.ensure_root()
+    root = tree2.root_id
+    tree2.children(root)
+    tree2.entries.pop(root, None)
+    real_entry = tree2._entry
+
+    def entry_during_sync(cid, n):
+        tree2.entries_gen += 1          # what _apply does
+        return real_entry(cid, n)
+    tree2._entry = entry_during_sync
+    tree2.children(root)
+    check(root not in tree2.entries, 'a listing built during a sync is not cached')
+    tree2._entry = real_entry
+    tree2.children(root)
+    check(root in tree2.entries, 'an undisturbed listing is cached')
+
+    # 10. expired pending sign-ins never count; a changed client is reported
+    si = auth.SignIn()
+    si.path = os.path.join(TMP, 'pending-rf2.json')   # not the earlier tests' pending sign-ins
+    si.pending = {'old': {'verifier': 'v', 't': time.time() - auth.PENDING_TTL - 5,
+                          'client_id': 'c1', 'redirect_uri': 'x', 'target': 'main'}}
+    try:
+        si.finish('justacode', 'c1', 's')
+        msg = ''
+    except auth.AuthError as e:
+        msg = str(e)
+    check('first' in msg, 'an expired pending sign-in is ignored for a bare code (%s)' % msg)
+    si.pending = {'new': {'verifier': 'v', 't': time.time(), 'client_id': 'c1',
+                          'redirect_uri': 'x', 'target': 'main'}}
+    try:
+        si.finish('justacode', 'c2', 's')
+        msg = ''
+    except auth.AuthError as e:
+        msg = str(e)
+    check('client was changed' in msg, 'a sign-in started with another client is refused clearly')
+
+
 try:
     for test in (test_shutdown, test_webdav, test_read_ahead, test_setup, test_reset,
-                 test_review_fixes, test_live_slideshow, test_sources):
+                 test_review_fixes, test_review_fixes_2, test_live_slideshow, test_sources):
         try:
             test()
         except Exception:               # a crash is a failure, not a silent skip

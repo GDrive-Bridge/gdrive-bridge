@@ -264,7 +264,9 @@ class Bridge(object):
                 self.setup_requested = time.time()
                 if self._start_setup() and payload.get('token'):
                     self.setup.add_link(payload['token'], payload.get('pin'))
-            self.publish()
+            # always rewritten, even if nothing changed: the menu waits for a status written
+            # after its request to know the service is running and has the new link
+            self.publish(force=True)
         elif command == 'refresh':
             self.request_refresh()
         elif command == 'signout':
@@ -286,8 +288,17 @@ class Bridge(object):
                                              require_state)
         # adding an account before the main one is signed in just fills the main slot
         new = target == 'new' and self.accounts.main.creds.signed_in
-        account = self.accounts.create() if new else (self.accounts.get(target)
-                                                      or self.accounts.main)
+        if new:
+            account = self.accounts.create()
+        elif target in ('new', MAIN):
+            account = self.accounts.main
+        else:
+            account = self.accounts.get(target)
+            if account is None:
+                # the account this sign-in was for was removed meanwhile: never fall back to
+                # the main account, which would silently replace its Google account
+                raise AuthError('That account was removed while you were signing in. Add it '
+                                'again if you still want it.')
         previous = account.creds.email
         account.creds.save(response, s['client_id'], s['client_secret'])
         try:
@@ -527,12 +538,12 @@ class Bridge(object):
                 'auth_error': account.creds.error or '', 'items': stats['items'],
                 'error': stats['error'] or ''}
 
-    def publish(self):
+    def publish(self, force=False):
         # A file, not a Kodi window property: Window.setProperty waits for Kodi's GUI
         # lock while holding Python's GIL. When the GUI thread is itself waiting on a
         # WebDAV request, that froze the WebDAV threads too (deadlock, 11-09).
         status = self.status()
-        if status == self._published:
+        if status == self._published and not force:
             return
         try:
             common.write_json(common.status_path(), dict(status, updated=time.time()))

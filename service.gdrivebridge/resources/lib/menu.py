@@ -138,7 +138,7 @@ def open_setup():
     # the status file outlives a killed Kodi, so wait for one written after this request
     st = wait_for(lambda s: s.get('updated', 0) >= asked and (s['setup_running'] or
                                                               s['setup_error']), 5)
-    if st is None:
+    if st is None or st.get('updated', 0) < asked:   # no reply: a status left by a killed Kodi
         xbmcgui.Dialog().ok(TITLE, 'The GDrive Bridge service isn\'t running. Restart Kodi and try '
                                    'again.')
         return

@@ -29,6 +29,7 @@ VIDEO_EXTS = ('.mkv', '.mp4', '.m4v', '.avi', '.mov', '.wmv', '.mpg', '.mpeg', '
 CONVERT_EXTS = ('.heic', '.heif')
 CONVERT_MIMES = ('image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence')
 LISTING_TTL = 12 * 3600   # safety net only; the change feed keeps listings current
+TARGET_RETRY = 3600       # an unavailable shortcut target is asked about again after this
 CACHE_VERSION = 1
 # Kodi browses these as folders (zip://, rar://, apk is a zip), reading them over the
 # network with many ranged requests while its GUI waits; hidden by default.
@@ -102,12 +103,18 @@ class DriveTree(object):
         self.prefetch_queue = collections.deque()
         self.prefetch_wake = threading.Event()
         self.prefetch_thread = None
+        # bumped whenever cached entries are dropped: children() only stores what it built if
+        # nothing was invalidated meanwhile (a change sync can land while it runs unlocked)
+        self.entries_gen = 0
+        # shortcut targets Google wouldn't return (deleted, unshared) -> when to ask again
+        self.failed_targets = {}
         self._reset()
 
     def _reset(self):
         self.nodes = {}       # file id -> node
         self.listings = {}    # folder key -> {'t': fetched, 'ids': [child ids]}
         self.entries = {}     # folder key -> (entries, {name: entry})
+        self.entries_gen += 1
         self.root_id = None
         self.page_token = None
         self.dirty = True
@@ -121,10 +128,12 @@ class DriveTree(object):
             if (hide_dot != self.hide_dot or hide_archives != self.hide_archives
                     or heic_as_jpeg != self.heic_as_jpeg):
                 self.entries.clear()
+                self.entries_gen += 1
             self.hide_dot = hide_dot
             self.hide_archives = hide_archives
             self.heic_as_jpeg = heic_as_jpeg
             self.entries.pop(TOP, None)
+            self.entries_gen += 1
 
     # ---- persistence ----------------------------------------------------
     def load(self):
@@ -137,6 +146,7 @@ class DriveTree(object):
             self.nodes = data.get('nodes', {})
             self.listings = data.get('listings', {})
             self.entries = {}
+            self.entries_gen += 1
             self.root_id = data.get('root')
             self.page_token = data.get('token')
             self.last_sync = data.get('synced', 0)
@@ -272,6 +282,7 @@ class DriveTree(object):
                 self.listings.pop(key, None)        # re-added last: the newest search
                 self.listings[key] = {'t': time.time(), 'ids': ids}
                 self.entries.pop(key, None)
+                self.entries_gen += 1
                 self.dirty = True
                 if key.startswith(SEARCH):
                     self._trim_searches()
@@ -285,6 +296,7 @@ class DriveTree(object):
         for key in searches[:-SEARCH_KEEP]:
             self.listings.pop(key, None)
             self.entries.pop(key, None)
+            self.entries_gen += 1
 
     # ---- read-ahead -----------------------------------------------------
     def read_ahead_folder(self, key):
@@ -345,6 +357,10 @@ class DriveTree(object):
                 key = self.prefetch_queue.popleft() if self.prefetch_queue else None
             if key is None:
                 if time.time() - idle_since > 60:
+                    with self.lock:         # a key queued just now must not be left behind
+                        if self.prefetch_queue:
+                            continue
+                        self.prefetch_thread = None
                     return                  # idle a minute: the next read_ahead restarts it
                 self.prefetch_wake.wait(5)
                 self.prefetch_wake.clear()
@@ -363,12 +379,20 @@ class DriveTree(object):
     def _target(self, target_id):
         with self.lock:
             node = self.nodes.get(target_id)
+            failed = self.failed_targets.get(target_id, 0)
         if node is not None:
             return node
+        if failed > time.time():
+            return None             # looked up recently and unavailable: don't make Kodi wait again
         try:
             f = self.drive.get(target_id)
         except DriveError as e:
             common.debug('shortcut target %s unavailable: %s' % (target_id, e))
+            with self.lock:
+                self.failed_targets[target_id] = time.time() + TARGET_RETRY
+                if len(self.failed_targets) > 1000:
+                    now = time.time()
+                    self.failed_targets = {k: t for k, t in self.failed_targets.items() if t > now}
             return None
         node = _node(f)
         with self.lock:
@@ -399,11 +423,20 @@ class DriveTree(object):
             cached = self.entries.get(key)
             if cached is not None and (key == TOP or self._fresh(key)):
                 return cached
+            gen = self.entries_gen
         if key == TOP:
             result = self._top()
         else:
             items = []
-            for cid in list(self.listing(key)):
+            ids = list(self.listing(key))   # may fetch from Google (unlocked)
+            with self.lock:
+                # snapshot the generation and re-read the ids together, so a change sync can't
+                # slip in between them
+                gen = self.entries_gen
+                current = self.listings.get(key)
+                if current is not None:
+                    ids = list(current['ids'])
+            for cid in ids:
                 with self.lock:
                     n = self.nodes.get(cid)
                 if n is None:
@@ -414,7 +447,8 @@ class DriveTree(object):
             result = self._dedupe(items)
         by_name = {e['name']: e for e in result}
         with self.lock:
-            self.entries[key] = (result, by_name)
+            if self.entries_gen == gen:     # else a sync changed things meanwhile: don't keep it
+                self.entries[key] = (result, by_name)
         return result, by_name
 
     def _entry(self, cid, n):
@@ -505,6 +539,7 @@ class DriveTree(object):
                 # anything cached before we had a token may have missed changes
                 self.listings.clear()
                 self.entries.clear()
+                self.entries_gen += 1
                 self.page_token = token
                 self.dirty = True
             self.last_sync = time.time()
@@ -520,6 +555,7 @@ class DriveTree(object):
                     with self.lock:
                         self.listings.clear()
                         self.entries.clear()
+                        self.entries_gen += 1
                         self.page_token = None
                         self.dirty = True
                     return self.sync()
@@ -576,6 +612,8 @@ class DriveTree(object):
                 if key.startswith(SEARCH):
                     listing['t'] = 0
             self.entries.clear()
+            self.entries_gen += 1
+            self.failed_targets.clear()    # a change may have shared a target again
             self.dirty = True
 
     def _link(self, key, fid):

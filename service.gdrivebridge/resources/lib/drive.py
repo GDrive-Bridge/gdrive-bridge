@@ -5,9 +5,7 @@ import json
 import re
 import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 
 from . import common
 from .auth import AuthError
@@ -50,6 +48,32 @@ def _token(creds, force=False):
         return creds.access_token(force=force)
     except OSError as e:
         raise DriveError(0, 'network', 'Google can\'t be reached: %s' % e)
+
+
+def _fetch(url, headers, redirects=3):
+    """GET a full URL (a thumbnail link) over a TRACKED connection, so stopping the service
+    can cut it like every other Google request (urllib's sockets can't be). Follows a few
+    redirects. Returns (status, body, content type)."""
+    for _ in range(redirects + 1):
+        if common.stopping.is_set():
+            raise DriveError(0, 'network', 'stopping')
+        parts = urllib.parse.urlsplit(url)
+        conn = common.https_connection(parts.netloc, timeout=30)
+        try:
+            conn.request('GET', (parts.path or '/') + ('?' + parts.query if parts.query else ''),
+                         headers=headers)
+            resp = conn.getresponse()
+            location = resp.getheader('Location')
+            body = resp.read()
+            if resp.status in (301, 302, 303, 307, 308) and location:
+                url = urllib.parse.urljoin(url, location)
+                continue
+            return resp.status, body, resp.getheader('Content-Type')
+        except (OSError, http.client.HTTPException) as e:
+            raise DriveError(0, 'network', str(e))
+        finally:
+            conn.close()
+    raise DriveError(0, 'network', 'too many redirects')
 
 
 class _Pool(object):
@@ -217,19 +241,14 @@ class Drive(object):
         force = False
         for attempt in range(2):
             token = _token(self.creds, force)
-            req = urllib.request.Request(link, headers={'Authorization': 'Bearer ' + token,
-                                                        'User-Agent': USER_AGENT})
-            try:
-                with urllib.request.urlopen(req, timeout=30,
-                                            context=common.ssl_context()) as resp:
-                    return resp.read(), resp.headers.get('Content-Type', 'image/jpeg')
-            except urllib.error.HTTPError as e:
-                if e.code in (401, 403) and attempt == 0:
-                    force = True
-                    continue
-                raise DriveError(e.code, 'thumbnail', str(e))
-            except (OSError, http.client.HTTPException) as e:
-                raise DriveError(0, 'network', str(e))
+            status, body, ctype = _fetch(link, {'Authorization': 'Bearer ' + token,
+                                                'User-Agent': USER_AGENT})
+            if status == 200:
+                return body, ctype or 'image/jpeg'
+            if status in (401, 403) and attempt == 0:
+                force = True
+                continue
+            raise DriveError(status, 'thumbnail', 'HTTP %d' % status)
         raise DriveError(0, 'retries', 'gave up')
 
     def shared_drives(self):

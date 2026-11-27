@@ -127,6 +127,9 @@ class SignIn(object):
                             'failed to load (it starts with http://127.0.0.1:8765/callback).')
         with self.lock:
             self._merge_disk()
+            now = time.time()                   # expired sign-ins never count (incl. from disk)
+            self.pending = {k: v for k, v in self.pending.items()
+                            if now - v.get('t', 0) < PENDING_TTL}
             if state:
                 entry = self.pending.get(state)
                 if entry is None:
@@ -138,6 +141,10 @@ class SignIn(object):
                     raise AuthError('Tap "Sign in with Google" first.')
                 state = max(self.pending, key=lambda k: self.pending[k]['t'])
                 entry = self.pending[state]
+        if entry.get('client_id') and entry['client_id'] != client_id:
+            # the client was changed after "Sign in with Google": its code belongs to the old one
+            raise AuthError('The Google client was changed after you tapped "Sign in with Google". '
+                            'Tap it again to sign in with the new client.')
         try:
             status, body = _post(TOKEN_URL, {
                 'code': code,
@@ -251,6 +258,11 @@ class Credentials(object):
                 self.error = None
                 return self._access
             revoked = body.get('error') in ('invalid_grant', 'invalid_client', 'unauthorized_client')
+            if not revoked and (status in (0, 408, 429) or status >= 500):
+                # Google's token service is briefly unwell (503, rate limit, an HTML error page):
+                # a network problem, not an expired sign-in, so self.error stays clear and Kodi
+                # doesn't announce one. drive._token turns OSError into a network DriveError.
+                raise OSError('Google sign-in service unavailable (%s)' % status)
             self.error = ('Google no longer accepts this sign-in. Sign in again. (While your '
                           'Google app is in Testing, this happens every 7 days.)' if revoked
                           else _describe(body, status))
